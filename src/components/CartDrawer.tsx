@@ -4,7 +4,7 @@ import {
   Truck, Tag
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 export const CartDrawer: React.FC = () => {
   const { 
@@ -132,6 +132,7 @@ export const CartDrawer: React.FC = () => {
                   <img
                     src={item.product.image}
                     alt={item.product.name}
+                    onLoad={handleProductImageLoad}
                     onError={(e) => handleProductImageError(e, item.product)}
                     className="w-16 h-16 sm:w-18 sm:h-18 rounded-xl border border-slate-200 shrink-0 bg-white object-contain object-center p-1"
                   />

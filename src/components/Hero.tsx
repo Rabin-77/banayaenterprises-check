@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { Sparkles, ArrowRight, Award, CheckCircle2, Star, Flame } from 'lucide-react';
 import { motion, useScroll, useTransform } from 'motion/react';
 import { useShop } from '../context/ShopContext';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 export const Hero: React.FC = () => {
   const { openProductDetail, products } = useShop();
@@ -174,6 +174,7 @@ export const Hero: React.FC = () => {
                     <img
                       src={malaiThean.image}
                       alt={malaiThean.name}
+                      onLoad={handleProductImageLoad}
                       onError={(e) => handleProductImageError(e, malaiThean)}
                       className="w-full h-full object-contain object-center p-0.5"
                     />

@@ -3,7 +3,7 @@ import { Heart, Star, ShoppingBag, Eye, Zap, Check } from 'lucide-react';
 import { Product } from '../types';
 import { useShop } from '../context/ShopContext';
 import { getPriceForProductWeight } from '../utils/pricing';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 interface ProductCardProps {
   product: Product;
@@ -53,16 +53,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     <div
       id={`product-card-${product.id}`}
       onClick={() => openProductDetail(product)}
-      className="h-full group bg-white rounded-2xl border border-slate-200/90 hover:border-emerald-500/60 transition-all duration-300 shadow-xs hover:shadow-xl flex flex-col justify-between overflow-hidden cursor-pointer sm:transform sm:hover:-translate-y-1.5 active:scale-[0.99]"
+      className="h-full w-full min-w-0 group bg-white rounded-2xl border border-slate-200/90 hover:border-emerald-500/60 transition-all duration-300 shadow-xs hover:shadow-xl flex flex-col justify-between overflow-hidden cursor-pointer sm:transform sm:hover:-translate-y-1.5 active:scale-[0.99]"
     >
       {/* Product Image Header Container */}
-      <div className="relative aspect-square w-full bg-white overflow-hidden flex items-center justify-center border-b border-slate-100">
+      <div className="relative aspect-square w-full shrink-0 bg-white overflow-hidden border-b border-slate-100">
         <img
           src={product.image}
           alt={product.name}
+          onLoad={handleProductImageLoad}
           onError={(e) => handleProductImageError(e, product)}
-          className="w-full h-full object-contain object-center p-2.5 sm:p-3"
-          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 w-full h-full object-contain object-center p-2.5 sm:p-3 block"
           referrerPolicy="no-referrer"
         />
 

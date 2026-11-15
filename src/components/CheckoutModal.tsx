@@ -15,7 +15,7 @@ import {
   BANAYA_UPI_ID 
 } from '../utils/whatsapp';
 import { getPriceForProductWeight } from '../utils/pricing';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 async function copyTextSafely(text: string): Promise<boolean> {
   try {
@@ -535,6 +535,7 @@ export const CheckoutModal: React.FC = () => {
                           <img 
                             src={item.product.image} 
                             alt={item.product.name} 
+                            onLoad={handleProductImageLoad}
                             onError={(e) => handleProductImageError(e, item.product)}
                             className="w-12 h-12 rounded-lg border border-slate-200 shrink-0 bg-white object-contain object-center p-0.5" 
                           />

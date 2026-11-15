@@ -1,25 +1,43 @@
 import { getAdminSessionPasskey } from './adminAuth';
 
+export class AdminAuthError extends Error {
+  constructor(message = 'Admin verification required. Please sign out and re-enter your passkey.') {
+    super(message);
+    this.name = 'AdminAuthError';
+  }
+}
+
 /**
  * Resize and optimize an image file on a canvas so uploads are crisp,
- * fast to transfer, and never blow past browser or server payload limits.
+ * compact across Chrome + iOS Safari, and never exceed browser storage or payload limits.
  */
-export async function optimizeImageToDataUrl(file: File, maxDimension = 1200): Promise<string> {
+export async function optimizeImageToDataUrl(file: File, maxDimension = 1000): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
     reader.onload = () => {
       const rawDataUrl = reader.result as string;
+      if (!rawDataUrl || !rawDataUrl.startsWith('data:image/')) {
+        reject(new Error('Unsupported or unreadable image file'));
+        return;
+      }
+
       const img = new Image();
-      img.onerror = () => resolve(rawDataUrl);
+      img.onerror = () => reject(new Error('Could not decode selected image file'));
       img.onload = () => {
-        let { width, height } = img;
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
+        if (!width || !height) {
+          reject(new Error('Image has invalid dimensions'));
+          return;
+        }
+
         if (width > maxDimension || height > maxDimension) {
           if (width >= height) {
-            height = Math.round((height * maxDimension) / width);
+            height = Math.max(1, Math.round((height * maxDimension) / width));
             width = maxDimension;
           } else {
-            width = Math.round((width * maxDimension) / height);
+            width = Math.max(1, Math.round((width * maxDimension) / height));
             height = maxDimension;
           }
         }
@@ -35,18 +53,31 @@ export async function optimizeImageToDataUrl(file: File, maxDimension = 1200): P
 
         ctx.drawImage(img, 0, 0, width, height);
 
-        const mime =
-          file.type === 'image/png'
-            ? 'image/png'
-            : file.type === 'image/webp'
-              ? 'image/webp'
-              : 'image/jpeg';
-
-        // Prefer compact WebP if original PNG is huge, otherwise preserve crisp quality
-        let output = canvas.toDataURL(mime, 0.88);
-        if (output.length > 450_000) {
-          output = canvas.toDataURL('image/webp', 0.84);
+        // Try compact WebP first (preserves transparency when supported, much smaller than PNG)
+        let output = '';
+        try {
+          const webpCandidate = canvas.toDataURL('image/webp', 0.84);
+          if (webpCandidate.startsWith('data:image/webp')) {
+            output = webpCandidate;
+          }
+        } catch {
+          // Safari / older WebViews do not support image/webp canvas encoding
         }
+
+        // Fallback to white-backed JPEG if WebP isn't supported or output is still too heavy
+        if (!output || output.length > 320_000) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.restore();
+
+          output = canvas.toDataURL('image/jpeg', 0.84);
+          if (output.length > 280_000) {
+            output = canvas.toDataURL('image/jpeg', 0.72);
+          }
+        }
+
         resolve(output);
       };
       img.src = rawDataUrl;
@@ -57,7 +88,7 @@ export async function optimizeImageToDataUrl(file: File, maxDimension = 1200): P
 
 /**
  * Optimizes and uploads an image file to the Express server (/api/upload),
- * returning a lightweight persistent /uploads/... URL (or optimized data URL fallback).
+ * returning a lightweight persistent /uploads/... URL (or compact data URL fallback only when offline/static).
  */
 export async function uploadProductImage(file: File): Promise<string> {
   const optimizedDataUrl = await optimizeImageToDataUrl(file);
@@ -75,14 +106,24 @@ export async function uploadProductImage(file: File): Promise<string> {
       })
     });
 
+    if (response.status === 401) {
+      throw new AdminAuthError();
+    }
+
     if (response.ok) {
-      const result = (await response.json()) as { url?: string };
-      if (result.url) {
-        return result.url;
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const result = (await response.json()) as { url?: string };
+        if (result.url) {
+          return result.url;
+        }
       }
     }
   } catch (err) {
-    console.warn('Server upload failed, using optimized inline image fallback:', err);
+    if (err instanceof AdminAuthError) {
+      throw err;
+    }
+    console.warn('Server upload unavailable, using optimized inline image fallback:', err);
   }
 
   return optimizedDataUrl;

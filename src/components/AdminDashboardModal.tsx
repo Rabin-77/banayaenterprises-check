@@ -11,8 +11,9 @@ import {
 import { useShop } from '../context/ShopContext';
 import { Product, Order } from '../types';
 import { CATEGORIES } from '../data/categories';
-import { uploadProductImage } from '../utils/imageUpload';
+import { AdminAuthError, uploadProductImage } from '../utils/imageUpload';
 import { clearAdminSession, hasAdminSession, setAdminSessionPasskey } from '../utils/adminAuth';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 interface AdminDashboardModalProps {
   isOpen: boolean;
@@ -292,8 +293,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
       });
       setActivePreviewIdx(0);
       showToast('Primary Front Image Uploaded', 'Image saved & ready. Click Save & Update Live Product to publish.', 'success', uploadedUrl);
-    } catch {
-      showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
+    } catch (err) {
+      if (err instanceof AdminAuthError) {
+        clearAdminSession();
+        setIsAuthenticated(false);
+        showToast('Admin Verification Required', err.message, 'warning');
+      } else {
+        showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
+      }
     } finally {
       inputEl.value = '';
       setIsUploadingImage(false);
@@ -333,8 +340,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
       });
       setActivePreviewIdx(slotIndex + 1);
       showToast(`Secondary Image #${slotIndex + 1} Uploaded`, 'Side phase photo uploaded. Save product to publish live.', 'success', uploadedUrl);
-    } catch {
-      showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
+    } catch (err) {
+      if (err instanceof AdminAuthError) {
+        clearAdminSession();
+        setIsAuthenticated(false);
+        showToast('Admin Verification Required', err.message, 'warning');
+      } else {
+        showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
+      }
     } finally {
       inputEl.value = '';
       setIsUploadingImage(false);
@@ -520,6 +533,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
         }));
         setPickerFolderId(targetFolder.id);
         setActivePreviewIdx(0);
+      } else if (!hasAdminSession()) {
+        setIsAuthenticated(false);
       }
     } finally {
       inputEl.value = '';
@@ -612,13 +627,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
       ? finalWeights
       : [finalDefaultWeight, ...finalWeights];
 
-    const primaryImg = (productForm.image || '').trim() || '/images/banaya_honey.jpg';
     const rawGallery = Array.isArray(productForm.gallery)
       ? productForm.gallery.map(g => String(g).trim()).filter(Boolean)
       : [];
-    const finalGallery = rawGallery.length > 0
-      ? [primaryImg, ...rawGallery.slice(1)]
-      : [primaryImg];
+    const primaryImg = (productForm.image || '').trim() || rawGallery[0] || '/images/banaya_honey.jpg';
+    const finalGallery = Array.from(new Set([primaryImg, ...rawGallery]));
 
     const numericMrp = Number(productForm.originalPrice);
     const finalMrp = Number.isFinite(numericMrp) && numericMrp > 0
@@ -658,10 +671,12 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
         : await updateProduct(compiledProduct);
       if (saved) {
         setLastSavedBanner({ name: compiledProduct.name, price: compiledProduct.price });
+        setEditingProduct(null);
+        setIsCreatingNewProduct(false);
+        setProductForm({});
+      } else if (!hasAdminSession()) {
+        setIsAuthenticated(false);
       }
-      setEditingProduct(null);
-      setIsCreatingNewProduct(false);
-      setProductForm({});
     } finally {
       setIsSavingProduct(false);
     }
@@ -1517,6 +1532,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                             <img
                               src={p.image}
                               alt={p.name}
+                              onLoad={handleProductImageLoad}
+                              onError={(e) => handleProductImageError(e, p)}
                               className="w-5 h-5 rounded-md object-contain bg-white shrink-0 border border-slate-200"
                             />
                             <span className="font-bold">{p.name}</span>
@@ -1602,6 +1619,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                         <img
                                           src={prod.image}
                                           alt={prod.name}
+                                          onLoad={handleProductImageLoad}
+                                          onError={(e) => handleProductImageError(e, prod)}
                                           className="w-full h-full object-contain object-center"
                                         />
                                         <div className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity rounded-xl">
@@ -1628,12 +1647,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                         <div 
                                           key={imgIdx} 
                                           onClick={() => handleStartEditProduct(prod)}
-                                          className="relative group cursor-pointer"
+                                          className="relative group cursor-pointer shrink-0"
                                           title={imgIdx === 0 ? 'Primary Front View' : `Secondary View #${imgIdx}`}
                                         >
                                           <img
                                             src={imgUrl}
                                             alt=""
+                                            onLoad={handleProductImageLoad}
+                                            onError={(e) => handleProductImageError(e, prod)}
                                             className={`w-7 h-7 rounded-md object-contain bg-white border ${
                                               imgIdx === 0 ? 'border-emerald-500 ring-1 ring-emerald-400' : 'border-slate-200'
                                             }`}
@@ -1873,7 +1894,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                 >
                                   <div className="w-11 h-11 rounded-lg bg-white border border-slate-200 shrink-0 flex items-center justify-center overflow-hidden p-1">
                                     {coverImg ? (
-                                      <img src={coverImg} alt={folder.name} className="w-full h-full object-contain" />
+                                      <img
+                                        src={coverImg}
+                                        alt={folder.name}
+                                        onLoad={handleProductImageLoad}
+                                        onError={(e) => handleProductImageError(e)}
+                                        className="w-full h-full object-contain"
+                                      />
                                     ) : (
                                       <FolderOpen className="w-5 h-5 text-emerald-700" />
                                     )}
@@ -2088,11 +2115,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                   key={img.id}
                                   className="rounded-xl border border-slate-200 bg-slate-50/70 p-2 flex flex-col justify-between gap-2 group hover:border-emerald-400 transition-colors"
                                 >
-                                  <div className="relative aspect-square rounded-lg bg-white border border-slate-200 p-2 flex items-center justify-center overflow-hidden">
+                                  <div className="relative aspect-square w-full shrink-0 rounded-lg bg-white border border-slate-200 overflow-hidden">
                                     <img
                                       src={img.url}
                                       alt={img.name}
-                                      className="w-full h-full object-contain"
+                                      onLoad={handleProductImageLoad}
+                                      onError={(e) => handleProductImageError(e)}
+                                      className="absolute inset-0 w-full h-full object-contain object-center p-2 block"
                                     />
                                     {confirmDeleteMediaImageId === img.id ? (
                                       <div className="absolute inset-0 bg-slate-950/75 flex flex-col items-center justify-center gap-1.5 p-2">
@@ -2509,6 +2538,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                               <img
                                 src={productForm.image}
                                 alt="Primary Front"
+                                onLoad={handleProductImageLoad}
+                                onError={(e) => handleProductImageError(e, editingProduct)}
                                 className="w-full h-full object-contain"
                               />
                             ) : (
@@ -2635,6 +2666,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                       <img
                                         src={secImg}
                                         alt={`Secondary ${secIdx + 1}`}
+                                        onLoad={handleProductImageLoad}
+                                        onError={(e) => handleProductImageError(e, editingProduct)}
                                         className="w-full h-full object-contain"
                                       />
                                     </div>
@@ -2848,7 +2881,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                   type="button"
                                   onClick={() => {
                                     if (!productForm.image) {
-                                      setProductForm({ ...productForm, image: img.url, gallery: [img.url] });
+                                      setProductForm(prev => ({
+                                        ...prev,
+                                        image: img.url,
+                                        gallery: Array.from(new Set([img.url, ...(prev.gallery || []).filter(Boolean)]))
+                                      }));
                                     } else {
                                       handleAddSecondarySlot(img.url);
                                     }
@@ -2859,6 +2896,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                   <img
                                     src={img.url}
                                     alt={img.name}
+                                    onLoad={handleProductImageLoad}
+                                    onError={(e) => handleProductImageError(e)}
                                     className="w-7 h-7 rounded object-contain bg-white shrink-0 border border-slate-200"
                                   />
                                   <div className="truncate">
@@ -3083,11 +3122,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                       return (
                         <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xl text-left space-y-3 relative overflow-hidden">
                           {/* Active Image Frame with Navigation Arrows */}
-                          <div className="relative aspect-square rounded-2xl overflow-hidden bg-white border border-slate-200 p-3 flex items-center justify-center group">
+                          <div className="relative aspect-square w-full shrink-0 rounded-2xl overflow-hidden bg-white border border-slate-200 group">
                             <img
                               src={activeImage}
                               alt={productForm.name || 'Product Preview'}
-                              className="w-full h-full object-contain object-center"
+                              onLoad={handleProductImageLoad}
+                              onError={(e) => handleProductImageError(e, editingProduct)}
+                              className="absolute inset-0 w-full h-full object-contain object-center p-3 block"
                             />
 
                             {/* Left/Right arrow navigation */}
@@ -3153,6 +3194,8 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                 <img
                                   src={imgItem}
                                   alt=""
+                                  onLoad={handleProductImageLoad}
+                                  onError={(e) => handleProductImageError(e, editingProduct)}
                                   className="w-full h-full object-contain"
                                 />
                                 <span className="absolute bottom-0.5 right-0.5 text-[8px] font-bold px-1 rounded bg-slate-900/85 text-white">

@@ -172,7 +172,7 @@ export const FeaturedProducts: React.FC = () => {
         {filteredProducts.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-5 lg:gap-6 items-stretch">
             {filteredProducts.map((product, idx) => (
-              <ScrollReveal key={product.id} delay={(idx % 4) * 0.07} distance={24} amount={0.08} className="h-full">
+              <ScrollReveal key={product.id} delay={(idx % 4) * 0.05} distance={20} amount={0.01} className="h-full w-full min-w-0 flex flex-col">
                 <ProductCard product={product} />
               </ScrollReveal>
             ))}

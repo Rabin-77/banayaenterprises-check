@@ -3,7 +3,7 @@ import { Product } from '../types';
 
 const PRODUCT_FALLBACK_IMAGES: Record<string, string> = {
   'pure-honey': '/assets/aistudio/1_7a3bf903.png',
-  'magarantha-thean': '/images/natural_honey_jar.jpg',
+  'magarantha-thean': '/assets/aistudio/1_f09ecd47.png',
   'malai-thean': '/images/malai_thean_bottle.jpg',
   'mixed-nuts': '/assets/aistudio/2_6b73aea0.png',
   'honey-amla': '/images/banaya_amla.webp',
@@ -38,6 +38,21 @@ export function getFallbackProductImage(
   );
 }
 
+export function isValidImageSource(src?: string): boolean {
+  if (!src || typeof src !== 'string') return false;
+  const trimmed = src.trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null' || trimmed === '[object Object]') {
+    return false;
+  }
+  if (trimmed.startsWith('/uploads/1-179456')) {
+    return false;
+  }
+  if (trimmed.startsWith('data:')) {
+    return /^data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]{16,}/i.test(trimmed);
+  }
+  return trimmed.startsWith('/') || trimmed.startsWith('https://') || trimmed.startsWith('http://');
+}
+
 export function isLocalAssetImage(src?: string): boolean {
   if (!src) return false;
   return (
@@ -49,25 +64,26 @@ export function isLocalAssetImage(src?: string): boolean {
 }
 
 export function isBrokenLegacyUpload(src?: string): boolean {
-  if (!src || typeof src !== 'string') return true;
-  const trimmed = src.trim();
-  if (!trimmed) return true;
-  // Previous wiped /uploads/1-179456* files no longer exist on disk
-  return trimmed.startsWith('/uploads/1-179456');
+  return !isValidImageSource(src);
 }
 
 export function healLegacyProductImages(product: Product): Product {
   const fallbackImg = getFallbackProductImage(product);
-  const healedImage = isBrokenLegacyUpload(product.image) ? fallbackImg : product.image;
+  const healedImage = isValidImageSource(product.image) ? product.image.trim() : fallbackImg;
 
   const rawGallery = Array.isArray(product.gallery) ? product.gallery : [];
-  const validGallery = rawGallery
-    .filter((img) => typeof img === 'string' && !isBrokenLegacyUpload(img))
-    .map((img) => img.trim());
+  const validGallery = Array.from(
+    new Set(
+      rawGallery
+        .filter((img) => isValidImageSource(img))
+        .map((img) => img.trim())
+    )
+  );
 
-  const mergedGallery = validGallery.includes(healedImage)
-    ? [healedImage, ...validGallery.filter((img) => img !== healedImage)]
-    : [healedImage, ...validGallery];
+  const mergedGallery = [
+    healedImage,
+    ...validGallery.filter((img) => img !== healedImage)
+  ];
 
   if (
     healedImage === product.image &&
@@ -84,23 +100,40 @@ export function healLegacyProductImages(product: Product): Product {
   };
 }
 
+export function handleProductImageLoad(
+  event: React.SyntheticEvent<HTMLImageElement>
+): void {
+  const img = event.currentTarget;
+  delete img.dataset.fallbackStage;
+  delete img.dataset.failedSrc;
+}
+
 export function handleProductImageError(
   event: React.SyntheticEvent<HTMLImageElement>,
   product?: Pick<Product, 'id' | 'categorySlug'> | null
 ): void {
   const img = event.currentTarget;
+  const currentSrc = img.getAttribute('src') || '';
   const fallback = getFallbackProductImage(product);
+
+  // Reset stage automatically whenever React binds a brand-new src URL to this img node
+  if (img.dataset.failedSrc && img.dataset.failedSrc !== currentSrc) {
+    delete img.dataset.fallbackStage;
+  }
+  img.dataset.failedSrc = currentSrc;
 
   if (img.dataset.fallbackStage === 'done') {
     return;
   }
 
-  if (img.dataset.fallbackStage !== 'primary' && img.getAttribute('src') !== fallback) {
+  if (img.dataset.fallbackStage !== 'primary' && currentSrc !== fallback) {
     img.dataset.fallbackStage = 'primary';
     img.src = fallback;
     return;
   }
 
-  img.dataset.fallbackStage = 'done';
-  img.src = '/images/banaya_logo.png';
+  if (currentSrc !== '/images/banaya_logo.png') {
+    img.dataset.fallbackStage = 'done';
+    img.src = '/images/banaya_logo.png';
+  }
 }

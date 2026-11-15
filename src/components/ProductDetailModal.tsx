@@ -7,7 +7,7 @@ import {
 import { useShop } from '../context/ShopContext';
 import { getProductBookingWhatsAppUrl, openWhatsAppUrl } from '../utils/whatsapp';
 import { getPriceForProductWeight } from '../utils/pricing';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad, isValidImageSource } from '../utils/imageFallback';
 
 export const ProductDetailModal: React.FC = () => {
   const { 
@@ -26,13 +26,15 @@ export const ProductDetailModal: React.FC = () => {
   const [quantity, setQuantity] = useState(1);
   const [activeTab, setActiveTab] = useState<'benefits' | 'ingredients' | 'usage' | 'reviews'>('benefits');
 
+  const gallerySignature = selectedProduct?.gallery?.join('|') || '';
+
   useEffect(() => {
     if (selectedProduct) {
       setSelectedWeight(selectedProduct.defaultWeight);
-      const galLen = selectedProduct.gallery?.length || 1;
-      setActiveImageIdx(prev => (prev >= galLen ? 0 : prev));
+      const galLen = selectedProduct.gallery?.filter((g) => isValidImageSource(g)).length || 1;
+      setActiveImageIdx((prev) => (prev >= galLen ? 0 : prev));
     }
-  }, [selectedProduct?.id, selectedProduct?.defaultWeight, selectedProduct?.gallery?.length]);
+  }, [selectedProduct?.id, selectedProduct?.defaultWeight, selectedProduct?.image, gallerySignature]);
 
   if (activeModal !== 'quickView' || !selectedProduct) return null;
 
@@ -46,8 +48,11 @@ export const ProductDetailModal: React.FC = () => {
       ? Math.round(((currentPrices.original - currentPrices.price) / currentPrices.original) * 100)
       : 0;
 
-  const images = selectedProduct.gallery && selectedProduct.gallery.length > 0
-    ? selectedProduct.gallery
+  const rawGallery = Array.isArray(selectedProduct.gallery)
+    ? selectedProduct.gallery.filter((img) => isValidImageSource(img)).map((img) => img.trim())
+    : [];
+  const images = rawGallery.length > 0
+    ? rawGallery
     : [selectedProduct.image];
 
   // Related products from same category or bestsellers
@@ -97,15 +102,16 @@ export const ProductDetailModal: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10">
             
             {/* Left Column: Image Gallery & Thumbnails */}
-            <div className="lg:col-span-6 space-y-4">
+            <div className="lg:col-span-6 space-y-4 min-w-0">
               
               {/* Main Active Image Frame */}
-              <div className="relative aspect-square w-full rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-xs flex items-center justify-center p-3 sm:p-5">
+              <div className="relative aspect-square w-full shrink-0 rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-xs">
                 <img
                   src={images[activeImageIdx] || selectedProduct.image}
                   alt={selectedProduct.name}
+                  onLoad={handleProductImageLoad}
                   onError={(e) => handleProductImageError(e, selectedProduct)}
-                  className="w-full h-full object-contain object-center"
+                  className="absolute inset-0 w-full h-full object-contain object-center p-3 sm:p-5 block"
                   referrerPolicy="no-referrer"
                 />
 
@@ -153,6 +159,7 @@ export const ProductDetailModal: React.FC = () => {
                       <img 
                         src={img} 
                         alt={`Thumbnail ${idx + 1}`} 
+                        onLoad={handleProductImageLoad}
                         onError={(e) => handleProductImageError(e, selectedProduct)}
                         className="w-full h-full object-contain object-center p-1" 
                         referrerPolicy="no-referrer" 
@@ -487,6 +494,7 @@ export const ProductDetailModal: React.FC = () => {
                     <img
                       src={relProduct.image}
                       alt={relProduct.name}
+                      onLoad={handleProductImageLoad}
                       onError={(e) => handleProductImageError(e, relProduct)}
                       className="w-16 h-16 rounded-xl bg-white border border-slate-100 object-contain object-center p-1 shrink-0"
                     />

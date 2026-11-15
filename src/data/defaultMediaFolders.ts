@@ -11,7 +11,9 @@ export const DEFAULT_MEDIA_FOLDERS: MediaFolder[] = [
       { id: 'img-pure-honey', name: 'Pure Honey (White Bg Bottle)', url: '/assets/aistudio/1_7a3bf903.png', createdAt: BASE_TIME },
       { id: 'img-pure-honey-kitchen', name: 'Pure Honey (Kitchen Pour)', url: '/assets/aistudio/2_32470c6e.png', createdAt: BASE_TIME },
       { id: 'img-pure-honey-podium', name: 'Pure Honey (Gold Podium)', url: '/assets/aistudio/3_25265580.png', createdAt: BASE_TIME },
-      { id: 'img-natural-honey-jar', name: 'Natural Honey Jar (Magarantha Thean)', url: '/images/natural_honey_jar.jpg', createdAt: BASE_TIME },
+      { id: 'img-natural-honey-jar', name: 'Magarantha Thean (White Bg Bottle)', url: '/assets/aistudio/1_f09ecd47.png', createdAt: BASE_TIME },
+      { id: 'img-magarantha-kitchen', name: 'Magarantha Thean (Pancakes Pour)', url: '/assets/aistudio/2_faea74dc.png', createdAt: BASE_TIME },
+      { id: 'img-magarantha-podium', name: 'Magarantha Thean (Gold Podium)', url: '/assets/aistudio/3_7b95bfd7.png', createdAt: BASE_TIME },
       { id: 'img-forest-honey-podium', name: 'Forest Honey Podium Shot', url: '/assets/aistudio/1_99cf5a09.webp', createdAt: BASE_TIME },
       { id: 'img-malai-thean', name: 'Malai Thean Mountain Bottle', url: '/images/malai_thean_bottle.jpg', createdAt: BASE_TIME },
       { id: 'img-mixed-nuts', name: 'Honey Mixed Nuts Jar', url: '/assets/aistudio/2_6b73aea0.png', createdAt: BASE_TIME },
@@ -28,12 +30,12 @@ export const DEFAULT_MEDIA_FOLDERS: MediaFolder[] = [
     name: 'Pure & Wyldflower Honey Sets',
     createdAt: BASE_TIME + 500,
     images: [
-      { id: 'img-up-pure-1', name: '1 Pure Honey (White Bg)', url: '/uploads/1-1794672134980-526233.png', createdAt: BASE_TIME + 500 },
-      { id: 'img-up-pure-2', name: '2 Pure Honey (Kitchen Pour)', url: '/uploads/2-1794672135727-7bdca2.webp', createdAt: BASE_TIME + 500 },
-      { id: 'img-up-pure-3', name: '3 Pure Honey (Gold Podium)', url: '/uploads/3-1794672136223-466f66.webp', createdAt: BASE_TIME + 500 },
-      { id: 'img-up-wyld-1', name: '1 Wyldflower Honey (White Bg)', url: '/uploads/1-1794672278429-f6e5da.webp', createdAt: BASE_TIME + 500 },
-      { id: 'img-up-wyld-2', name: '2 Wyldflower Honey (Pancakes)', url: '/uploads/2-1794672279215-4c2ce1.webp', createdAt: BASE_TIME + 500 },
-      { id: 'img-up-wyld-3', name: '3 Wyldflower Honey (Gold Podium)', url: '/uploads/3-1794672279774-7f2a7c.webp', createdAt: BASE_TIME + 500 }
+      { id: 'img-up-pure-1', name: '1 Pure Honey (White Bg)', url: '/assets/aistudio/1_7a3bf903.png', createdAt: BASE_TIME + 500 },
+      { id: 'img-up-pure-2', name: '2 Pure Honey (Kitchen Pour)', url: '/assets/aistudio/2_32470c6e.png', createdAt: BASE_TIME + 500 },
+      { id: 'img-up-pure-3', name: '3 Pure Honey (Gold Podium)', url: '/assets/aistudio/3_25265580.png', createdAt: BASE_TIME + 500 },
+      { id: 'img-up-wyld-1', name: '1 Wyldflower Honey (White Bg)', url: '/assets/aistudio/1_f09ecd47.png', createdAt: BASE_TIME + 500 },
+      { id: 'img-up-wyld-2', name: '2 Wyldflower Honey (Pancakes)', url: '/assets/aistudio/2_faea74dc.png', createdAt: BASE_TIME + 500 },
+      { id: 'img-up-wyld-3', name: '3 Wyldflower Honey (Gold Podium)', url: '/assets/aistudio/3_7b95bfd7.png', createdAt: BASE_TIME + 500 }
     ]
   },
   {

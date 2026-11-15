@@ -67,11 +67,11 @@
         "Wild Harvested",
         "Bestseller"
       ],
-      "image": "/images/natural_honey_jar.jpg",
+      "image": "/assets/aistudio/1_f09ecd47.png",
       "gallery": [
-        "/images/natural_honey_jar.jpg",
-        "/images/honeycomb_macro.jpg",
-        "/assets/aistudio/1_99cf5a09.webp"
+        "/assets/aistudio/1_f09ecd47.png",
+        "/assets/aistudio/2_faea74dc.png",
+        "/assets/aistudio/3_7b95bfd7.png"
       ],
       "description": "Magarantha Thean (Bee Pollen Honey) is naturally concentrated with active flower pollen collected by wild honey bees from diverse medicinal herbs in deep virgin forests. Unheated and free from added corn syrups, this dark amber elixir retains its natural living enzymes, flavonoids, and vital bio-nutrients.",
       "ingredients": [
@@ -1028,8 +1028,20 @@
         },
         {
           "id": "img-natural-honey-jar",
-          "name": "Natural Honey Jar (Magarantha Thean)",
-          "url": "/images/natural_honey_jar.jpg",
+          "name": "Magarantha Thean (White Bg Bottle)",
+          "url": "/assets/aistudio/1_f09ecd47.png",
+          "createdAt": 1794600000000
+        },
+        {
+          "id": "img-magarantha-kitchen",
+          "name": "Magarantha Thean (Pancakes Pour)",
+          "url": "/assets/aistudio/2_faea74dc.png",
+          "createdAt": 1794600000000
+        },
+        {
+          "id": "img-magarantha-podium",
+          "name": "Magarantha Thean (Gold Podium)",
+          "url": "/assets/aistudio/3_7b95bfd7.png",
           "createdAt": 1794600000000
         },
         {
@@ -1096,37 +1108,37 @@
         {
           "id": "img-up-pure-1",
           "name": "1 Pure Honey (White Bg)",
-          "url": "/uploads/1-1794672134980-526233.png",
+          "url": "/assets/aistudio/1_7a3bf903.png",
           "createdAt": 1794600000500
         },
         {
           "id": "img-up-pure-2",
           "name": "2 Pure Honey (Kitchen Pour)",
-          "url": "/uploads/2-1794672135727-7bdca2.webp",
+          "url": "/assets/aistudio/2_32470c6e.png",
           "createdAt": 1794600000500
         },
         {
           "id": "img-up-pure-3",
           "name": "3 Pure Honey (Gold Podium)",
-          "url": "/uploads/3-1794672136223-466f66.webp",
+          "url": "/assets/aistudio/3_25265580.png",
           "createdAt": 1794600000500
         },
         {
           "id": "img-up-wyld-1",
           "name": "1 Wyldflower Honey (White Bg)",
-          "url": "/uploads/1-1794672278429-f6e5da.webp",
+          "url": "/assets/aistudio/1_f09ecd47.png",
           "createdAt": 1794600000500
         },
         {
           "id": "img-up-wyld-2",
           "name": "2 Wyldflower Honey (Pancakes)",
-          "url": "/uploads/2-1794672279215-4c2ce1.webp",
+          "url": "/assets/aistudio/2_faea74dc.png",
           "createdAt": 1794600000500
         },
         {
           "id": "img-up-wyld-3",
           "name": "3 Wyldflower Honey (Gold Podium)",
-          "url": "/uploads/3-1794672279774-7f2a7c.webp",
+          "url": "/assets/aistudio/3_7b95bfd7.png",
           "createdAt": 1794600000500
         }
       ]
@@ -1266,5 +1278,5 @@
       ]
     }
   ],
-  "updatedAt": 1794680000000
+  "updatedAt": 1794685000000
 }

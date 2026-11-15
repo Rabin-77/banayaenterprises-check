@@ -3,14 +3,14 @@ import { Product, CartItem, Order, ActiveModal, MediaFolder, MediaFolderImage } 
 import { PRODUCTS } from '../data/products';
 import { DEFAULT_MEDIA_FOLDERS } from '../data/defaultMediaFolders';
 import { getPriceForProductWeight } from '../utils/pricing';
-import { getAdminSessionPasskey } from '../utils/adminAuth';
+import { clearAdminSession, getAdminSessionPasskey } from '../utils/adminAuth';
 import { healLegacyProductImages } from '../utils/imageFallback';
 import { sortCatalogByCanonicalOrder } from '../utils/catalogOrder';
 import { optimizeImageToDataUrl } from '../utils/imageUpload';
 
 const SYNC_CHANNEL_NAME = 'banaya_store_sync';
 const CATALOG_VERSION_KEY = 'banaya_catalog_version';
-const CURRENT_CATALOG_VERSION = '2026-11-14-ordered-v4';
+const CURRENT_CATALOG_VERSION = '2026-11-14-ordered-v5';
 
 interface ToastMessage {
   id: string;
@@ -685,25 +685,26 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return orders.find(o => o.id.toUpperCase() === cleanId || o.trackingNumber.toUpperCase() === cleanId) || null;
   };
 
-  // Product Management (Admin) -> Optimistic UI + Authoritative Server Sync + Cross-Tab Broadcast
+  // Product Management (Admin) -> Authoritative Server Sync + Cross-Tab Broadcast
   const updateProduct = async (updatedProduct: Product): Promise<boolean> => {
-    let nextProducts: Product[] = [];
-    setProducts(prev => {
-      const exists = prev.some(p => p.id === updatedProduct.id);
-      nextProducts = exists
-        ? prev.map(p => (p.id === updatedProduct.id ? updatedProduct : p))
-        : [updatedProduct, ...prev];
-      return nextProducts;
-    });
+    const healed = healLegacyProductImages(updatedProduct);
+    const prevProducts = products;
+    const exists = prevProducts.some(p => p.id === healed.id);
+    const nextProducts = sortCatalogByCanonicalOrder(
+      exists
+        ? prevProducts.map(p => (p.id === healed.id ? healed : p))
+        : [healed, ...prevProducts]
+    );
+    setProducts(nextProducts);
 
     try {
-      const res = await fetch(`/api/products/${encodeURIComponent(updatedProduct.id)}`, {
+      const res = await fetch(`/api/products/${encodeURIComponent(healed.id)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'x-admin-passkey': getAdminSessionPasskey()
         },
-        body: JSON.stringify(updatedProduct)
+        body: JSON.stringify(healed)
       });
 
       if (res.ok) {
@@ -712,11 +713,22 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         broadcastChannelRef.current?.postMessage({ products: data.products, updatedAt: data.updatedAt });
         showToast(
           'Synced Live to Website',
-          `${updatedProduct.name} (₹${updatedProduct.price}) is now live across the store.`,
+          `${healed.name} (₹${healed.price}) is now live across the store.`,
           'success',
-          updatedProduct.image
+          healed.image
         );
         return true;
+      }
+
+      if (res.status === 401) {
+        clearAdminSession();
+        setProducts(prevProducts);
+        showToast(
+          'Admin Verification Required',
+          'Your admin session expired. Please sign out and re-enter passkey to save changes.',
+          'warning'
+        );
+        return false;
       }
 
       let serverErr = `Server returned HTTP ${res.status}`;
@@ -726,23 +738,26 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {
         // ignore JSON parse error
       }
+      setProducts(prevProducts);
       setServerSynced(false);
-      showToast('Live Sync Warning', `${updatedProduct.name} could not be saved to server (${serverErr}).`, 'warning');
+      showToast('Live Sync Warning', `${healed.name} could not be saved to server (${serverErr}).`, 'warning');
       return false;
     } catch {
       setServerSynced(false);
       broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
-      showToast('Saved in Browser Only', `Server unreachable — ${updatedProduct.name} updated in this browser only.`, 'warning', updatedProduct.image);
-      return false;
+      showToast('Saved in Browser Only', `Server unreachable — ${healed.name} updated in this browser only.`, 'warning', healed.image);
+      return true;
     }
   };
 
   const addProduct = async (newProduct: Product): Promise<boolean> => {
-    let nextProducts: Product[] = [];
-    setProducts(prev => {
-      nextProducts = [newProduct, ...prev.filter(p => p.id !== newProduct.id)];
-      return nextProducts;
-    });
+    const healed = healLegacyProductImages(newProduct);
+    const prevProducts = products;
+    const nextProducts = sortCatalogByCanonicalOrder([
+      healed,
+      ...prevProducts.filter(p => p.id !== healed.id)
+    ]);
+    setProducts(nextProducts);
 
     try {
       const res = await fetch('/api/products', {
@@ -751,15 +766,26 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           'Content-Type': 'application/json',
           'x-admin-passkey': getAdminSessionPasskey()
         },
-        body: JSON.stringify(newProduct)
+        body: JSON.stringify(healed)
       });
 
       if (res.ok) {
         const data = (await res.json()) as StoreSyncPayload;
         applyServerSnapshot(data);
         broadcastChannelRef.current?.postMessage({ products: data.products, updatedAt: data.updatedAt });
-        showToast('Launched Live to Website', `${newProduct.name} is now live in the storefront catalog.`, 'success', newProduct.image);
+        showToast('Launched Live to Website', `${healed.name} is now live in the storefront catalog.`, 'success', healed.image);
         return true;
+      }
+
+      if (res.status === 401) {
+        clearAdminSession();
+        setProducts(prevProducts);
+        showToast(
+          'Admin Verification Required',
+          'Your admin session expired. Please sign out and re-enter passkey to launch this product.',
+          'warning'
+        );
+        return false;
       }
 
       let serverErr = `Server returned HTTP ${res.status}`;
@@ -769,24 +795,23 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {
         // ignore
       }
+      setProducts(prevProducts);
       setServerSynced(false);
-      showToast('Live Sync Warning', `${newProduct.name} could not be saved to server (${serverErr}).`, 'warning');
+      showToast('Live Sync Warning', `${healed.name} could not be saved to server (${serverErr}).`, 'warning');
       return false;
     } catch {
       setServerSynced(false);
       broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
-      showToast('Saved in Browser Only', `Server unreachable — ${newProduct.name} added in this browser only.`, 'warning', newProduct.image);
-      return false;
+      showToast('Saved in Browser Only', `Server unreachable — ${healed.name} added in this browser only.`, 'warning', healed.image);
+      return true;
     }
   };
 
   const deleteProduct = async (productId: string): Promise<boolean> => {
     const prod = products.find(p => p.id === productId);
-    let nextProducts: Product[] = [];
-    setProducts(prev => {
-      nextProducts = prev.filter(p => p.id !== productId);
-      return nextProducts;
-    });
+    const prevProducts = products;
+    const nextProducts = prevProducts.filter(p => p.id !== productId);
+    setProducts(nextProducts);
 
     try {
       const res = await fetch(`/api/products/${encodeURIComponent(productId)}`, {
@@ -804,6 +829,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return true;
       }
 
+      if (res.status === 401) {
+        clearAdminSession();
+        setProducts(prevProducts);
+        showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to delete products.', 'warning');
+        return false;
+      }
+
+      setProducts(prevProducts);
       setServerSynced(false);
       showToast('Live Sync Warning', `Could not remove ${prod?.name || 'product'} from server.`, 'warning');
       return false;
@@ -811,7 +844,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setServerSynced(false);
       broadcastChannelRef.current?.postMessage({ products: nextProducts, updatedAt: Date.now() });
       showToast('Removed in Browser Only', `Server unreachable — ${prod?.name || 'Product'} removed locally only.`, 'warning');
-      return false;
+      return true;
     }
   };
 
@@ -852,12 +885,18 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         showToast('Folder Created', `"${data.folder?.name || cleanName}" added to Image Folders.`, 'success');
         return data.folder || fallbackFolder;
       }
+
+      if (res.status === 401) {
+        clearAdminSession();
+        showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to create folders.', 'warning');
+        return null;
+      }
     } catch {
-      // fallback to local mode
+      // fallback to local mode when offline
     }
 
     setMediaFolders(prev => [fallbackFolder, ...prev]);
-    showToast('Folder Created', `"${cleanName}" created.`, 'success');
+    showToast('Folder Created', `"${cleanName}" created locally.`, 'success');
     return fallbackFolder;
   };
 
@@ -883,6 +922,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (res.status === 401) {
+        clearAdminSession();
         setMediaFolders(prevFolders);
         showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to delete folders.', 'warning');
         return false;
@@ -919,6 +959,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (res.status === 401) {
+        clearAdminSession();
         setMediaFolders(prevFolders);
         showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to clear folders.', 'warning');
         return false;
@@ -988,6 +1029,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (res.status === 401) {
+          clearAdminSession();
           showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to upload images.', 'warning');
           return uploadedItems;
         }
@@ -1101,6 +1143,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (res.status === 401) {
+        clearAdminSession();
         setMediaFolders(prevFolders);
         showToast('Admin Verification Required', 'Please sign out and re-enter admin passkey to delete images.', 'warning');
         return false;

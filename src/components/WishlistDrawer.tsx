@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Heart, Trash2, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 export const WishlistDrawer: React.FC = () => {
   const { 
@@ -79,6 +79,7 @@ export const WishlistDrawer: React.FC = () => {
                   src={product.image}
                   alt={product.name}
                   onClick={() => openProductDetail(product)}
+                  onLoad={handleProductImageLoad}
                   onError={(e) => handleProductImageError(e, product)}
                   className="w-16 h-16 rounded-xl border border-slate-200 shrink-0 cursor-pointer bg-white object-contain object-center p-1"
                 />

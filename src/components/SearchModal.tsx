@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Search, X, ArrowRight } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { Product } from '../types';
-import { handleProductImageError } from '../utils/imageFallback';
+import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 export const SearchModal: React.FC = () => {
   const { 
@@ -210,6 +210,7 @@ export const SearchModal: React.FC = () => {
                       <img
                         src={product.image}
                         alt={product.name}
+                        onLoad={handleProductImageLoad}
                         onError={(e) => handleProductImageError(e, product)}
                         className="w-12 h-12 rounded-lg border border-slate-200 shrink-0 bg-white object-contain object-center p-0.5"
                       />

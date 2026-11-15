@@ -212,6 +212,45 @@ function createInitialOrders(products: StoredProduct[]): StoredOrder[] {
   ];
 }
 
+function uploadUrlExistsOnDisk(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('/uploads/')) return true;
+  const filename = path.basename(url);
+  const candidates = [
+    path.join(UPLOADS_DIR, filename),
+    path.join(ROOT_DIR, 'public', 'uploads', filename),
+    path.join(DIST_DIR, 'uploads', filename)
+  ];
+  return candidates.some((filePath) => fs.existsSync(filePath));
+}
+
+function sanitizeLoadedStoreState(state: StoreState, defaultProducts: StoredProduct[]): StoreState {
+  const fallbackMap = new Map(defaultProducts.map((p) => [p.id, p]));
+  const sanitizedProducts = sortCatalogByCanonicalOrder(state.products).map((p) => {
+    const def = fallbackMap.get(p.id);
+    const validImage = uploadUrlExistsOnDisk(p.image) ? p.image : (def?.image || '/images/banaya_logo.png');
+    const rawGallery = Array.isArray(p.gallery) ? p.gallery : [];
+    const validGallery = rawGallery.filter((g) => uploadUrlExistsOnDisk(g));
+    const mergedGallery = Array.from(new Set([validImage, ...validGallery]));
+    return {
+      ...p,
+      image: validImage,
+      gallery: mergedGallery
+    };
+  });
+
+  const sanitizedFolders = state.mediaFolders.map((folder) => ({
+    ...folder,
+    images: (folder.images || []).filter((img) => uploadUrlExistsOnDisk(img.url))
+  }));
+
+  return {
+    ...state,
+    products: sanitizedProducts,
+    mediaFolders: sanitizedFolders
+  };
+}
+
 function loadInitialStore(): StoreState {
   const defaultProducts = loadDefaultProducts();
   const repoStoreFile = path.join(ROOT_DIR, 'data', 'store.json');
@@ -222,7 +261,7 @@ function loadInitialStore(): StoreState {
       if (fs.existsSync(filePath)) {
         const raw = fs.readFileSync(filePath, 'utf8');
         const parsed = JSON.parse(raw) as Partial<StoreState>;
-        return {
+        return sanitizeLoadedStoreState({
           products: Array.isArray(parsed.products) && parsed.products.length > 0
             ? sortCatalogByCanonicalOrder(parsed.products)
             : sortCatalogByCanonicalOrder(defaultProducts),
@@ -232,14 +271,14 @@ function loadInitialStore(): StoreState {
             ? parsed.mediaFolders
             : JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
           updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()
-        };
+        }, defaultProducts);
       }
     } catch (err) {
       console.error(`Failed to load ${filePath}, trying next fallback:`, err);
     }
   }
 
-  return {
+  return sanitizeLoadedStoreState({
     products: sortCatalogByCanonicalOrder(defaultProducts),
     orders: createInitialOrders(defaultProducts),
     adminNotes: {
@@ -249,7 +288,7 @@ function loadInitialStore(): StoreState {
     },
     mediaFolders: JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
     updatedAt: Date.now()
-  };
+  }, defaultProducts);
 }
 
 let storeState: StoreState = loadInitialStore();
@@ -314,6 +353,10 @@ async function startServer(): Promise<void> {
   if (fs.existsSync(distUploadsDir)) {
     app.use('/uploads', express.static(distUploadsDir, { maxAge: '7d' }));
   }
+  // Never fall through to SPA index.html when an upload file does not exist
+  app.use('/uploads', (_req: Request, res: Response) => {
+    res.status(404).end();
+  });
 
   // Health check
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -407,7 +450,10 @@ async function startServer(): Promise<void> {
     const isStillUsedByFolder = storeState.mediaFolders.some((f) =>
       f.images.some((img) => img.url === url)
     );
-    if (isStillUsedByProduct || isStillUsedByFolder) return;
+    const isStillUsedByOrder = storeState.orders.some((o) =>
+      o.items.some((it) => it.product?.image === url || (Array.isArray(it.product?.gallery) && it.product.gallery.includes(url)))
+    );
+    if (isStillUsedByProduct || isStillUsedByFolder || isStillUsedByOrder) return;
 
     const filename = path.basename(url);
     const targetPath = path.join(UPLOADS_DIR, filename);
@@ -418,6 +464,21 @@ async function startServer(): Promise<void> {
         console.warn('Could not delete unused upload file:', err);
       }
     }
+  }
+
+  function normalizeIncomingProduct(incoming: StoredProduct): StoredProduct {
+    const cleanImage = typeof incoming.image === 'string' && incoming.image.trim()
+      ? incoming.image.trim()
+      : '/images/banaya_logo.png';
+    const rawGallery = Array.isArray(incoming.gallery)
+      ? incoming.gallery.map((g) => (typeof g === 'string' ? g.trim() : '')).filter(Boolean)
+      : [];
+    const dedupedGallery = Array.from(new Set([cleanImage, ...rawGallery]));
+    return {
+      ...incoming,
+      image: cleanImage,
+      gallery: dedupedGallery
+    };
   }
 
   // Upload product image to persistent uploads folder
@@ -695,12 +756,13 @@ async function startServer(): Promise<void> {
   app.put('/api/products/:id', requireAdmin, (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const incoming = req.body as StoredProduct;
-      if (!incoming || !incoming.id || !incoming.name) {
+      const rawIncoming = req.body as StoredProduct;
+      if (!rawIncoming || !rawIncoming.id || !rawIncoming.name) {
         res.status(400).json({ error: 'Invalid product payload' });
         return;
       }
 
+      const incoming = normalizeIncomingProduct(rawIncoming);
       const existingIdx = storeState.products.findIndex((p) => p.id === id);
       if (existingIdx >= 0) {
         storeState.products[existingIdx] = incoming;
@@ -725,14 +787,15 @@ async function startServer(): Promise<void> {
   // Create new product
   app.post('/api/products', requireAdmin, (req: Request, res: Response) => {
     try {
-      const incoming = req.body as StoredProduct;
-      if (!incoming || !incoming.id || !incoming.name) {
+      const rawIncoming = req.body as StoredProduct;
+      if (!rawIncoming || !rawIncoming.id || !rawIncoming.name) {
         res.status(400).json({ error: 'Invalid product payload' });
         return;
       }
 
+      const incoming = normalizeIncomingProduct(rawIncoming);
       const deduped = storeState.products.filter((p) => p.id !== incoming.id);
-      storeState.products = [incoming, ...deduped];
+      storeState.products = sortCatalogByCanonicalOrder([incoming, ...deduped]);
 
       persistStore(true);
       broadcastStoreUpdate('product-added');
