@@ -2,7 +2,7 @@ import React from 'react';
 import { Product } from '../types';
 
 const PRODUCT_FALLBACK_IMAGES: Record<string, string> = {
-  'pure-honey': '/images/banaya_honey.jpg',
+  'pure-honey': '/assets/aistudio/1_7a3bf903.png',
   'magarantha-thean': '/images/natural_honey_jar.jpg',
   'malai-thean': '/images/malai_thean_bottle.jpg',
   'mixed-nuts': '/assets/aistudio/2_6b73aea0.png',
@@ -18,7 +18,7 @@ const PRODUCT_FALLBACK_IMAGES: Record<string, string> = {
 };
 
 const CATEGORY_FALLBACK_IMAGES: Record<string, string> = {
-  'honey-sweeteners': '/images/banaya_honey.jpg',
+  'honey-sweeteners': '/assets/aistudio/1_7a3bf903.png',
   'health-drinks': '/images/abc_malt_front.jpg',
   'herbal-powders': '/images/murungai_pouch_front.jpg',
   'ghee-foods': '/assets/aistudio/2_4b4979ee.png',

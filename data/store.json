@@ -23,12 +23,11 @@
         "Wildflower",
         "Bestseller"
       ],
-      "image": "/images/banaya_honey.jpg",
+      "image": "/assets/aistudio/1_7a3bf903.png",
       "gallery": [
-        "/images/banaya_honey.jpg",
-        "/assets/aistudio/honey_web_1d34d9ea.jfif",
-        "/images/natural_honey_jar.jpg",
-        "/images/honeycomb_macro.jpg"
+        "/assets/aistudio/1_7a3bf903.png",
+        "/assets/aistudio/2_32470c6e.png",
+        "/assets/aistudio/3_25265580.png"
       ],
       "description": "Banaya Enterprise 100% Pure Wildflower Honey is harvested directly from happy bees and natural honeycombs using traditional cold filtering without heating, pasteurization, or adulteration. Rich in natural bee pollen, live enzymes, and organic floral nectars, this golden nectar offers wholesome nutrition and natural sweetness for the entire family.",
       "ingredients": [
@@ -1011,26 +1010,26 @@
       "images": [
         {
           "id": "img-pure-honey",
-          "name": "Pure Honey (Front Bottle)",
-          "url": "/images/banaya_honey.jpg",
+          "name": "Pure Honey (White Bg Bottle)",
+          "url": "/assets/aistudio/1_7a3bf903.png",
           "createdAt": 1794600000000
         },
         {
-          "id": "img-honey-web",
-          "name": "Honey Web Shot (Side Phase)",
-          "url": "/assets/aistudio/honey_web_1d34d9ea.jfif",
+          "id": "img-pure-honey-kitchen",
+          "name": "Pure Honey (Kitchen Pour)",
+          "url": "/assets/aistudio/2_32470c6e.png",
+          "createdAt": 1794600000000
+        },
+        {
+          "id": "img-pure-honey-podium",
+          "name": "Pure Honey (Gold Podium)",
+          "url": "/assets/aistudio/3_25265580.png",
           "createdAt": 1794600000000
         },
         {
           "id": "img-natural-honey-jar",
           "name": "Natural Honey Jar (Magarantha Thean)",
           "url": "/images/natural_honey_jar.jpg",
-          "createdAt": 1794600000000
-        },
-        {
-          "id": "img-honeycomb-macro",
-          "name": "Raw Honeycomb Texture",
-          "url": "/images/honeycomb_macro.jpg",
           "createdAt": 1794600000000
         },
         {
@@ -1267,5 +1266,5 @@
       ]
     }
   ],
-  "updatedAt": 1794673000000
+  "updatedAt": 1794680000000
 }

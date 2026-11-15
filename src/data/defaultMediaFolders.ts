@@ -8,10 +8,10 @@ export const DEFAULT_MEDIA_FOLDERS: MediaFolder[] = [
     name: 'Honey & Natural Sweeteners',
     createdAt: BASE_TIME,
     images: [
-      { id: 'img-pure-honey', name: 'Pure Honey (Front Bottle)', url: '/images/banaya_honey.jpg', createdAt: BASE_TIME },
-      { id: 'img-honey-web', name: 'Honey Web Shot (Side Phase)', url: '/assets/aistudio/honey_web_1d34d9ea.jfif', createdAt: BASE_TIME },
+      { id: 'img-pure-honey', name: 'Pure Honey (White Bg Bottle)', url: '/assets/aistudio/1_7a3bf903.png', createdAt: BASE_TIME },
+      { id: 'img-pure-honey-kitchen', name: 'Pure Honey (Kitchen Pour)', url: '/assets/aistudio/2_32470c6e.png', createdAt: BASE_TIME },
+      { id: 'img-pure-honey-podium', name: 'Pure Honey (Gold Podium)', url: '/assets/aistudio/3_25265580.png', createdAt: BASE_TIME },
       { id: 'img-natural-honey-jar', name: 'Natural Honey Jar (Magarantha Thean)', url: '/images/natural_honey_jar.jpg', createdAt: BASE_TIME },
-      { id: 'img-honeycomb-macro', name: 'Raw Honeycomb Texture', url: '/images/honeycomb_macro.jpg', createdAt: BASE_TIME },
       { id: 'img-forest-honey-podium', name: 'Forest Honey Podium Shot', url: '/assets/aistudio/1_99cf5a09.webp', createdAt: BASE_TIME },
       { id: 'img-malai-thean', name: 'Malai Thean Mountain Bottle', url: '/images/malai_thean_bottle.jpg', createdAt: BASE_TIME },
       { id: 'img-mixed-nuts', name: 'Honey Mixed Nuts Jar', url: '/assets/aistudio/2_6b73aea0.png', createdAt: BASE_TIME },

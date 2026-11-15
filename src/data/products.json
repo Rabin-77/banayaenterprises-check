@@ -22,12 +22,11 @@
       "Wildflower",
       "Bestseller"
     ],
-    "image": "/images/banaya_honey.jpg",
+    "image": "/assets/aistudio/1_7a3bf903.png",
     "gallery": [
-      "/images/banaya_honey.jpg",
-      "/assets/aistudio/honey_web_1d34d9ea.jfif",
-      "/images/natural_honey_jar.jpg",
-      "/images/honeycomb_macro.jpg"
+      "/assets/aistudio/1_7a3bf903.png",
+      "/assets/aistudio/2_32470c6e.png",
+      "/assets/aistudio/3_25265580.png"
     ],
     "description": "Banaya Enterprise 100% Pure Wildflower Honey is harvested directly from happy bees and natural honeycombs using traditional cold filtering without heating, pasteurization, or adulteration. Rich in natural bee pollen, live enzymes, and organic floral nectars, this golden nectar offers wholesome nutrition and natural sweetness for the entire family.",
     "ingredients": [
