@@ -2,29 +2,29 @@ import React from 'react';
 import { Product } from '../types';
 
 const PRODUCT_FALLBACK_IMAGES: Record<string, string> = {
-  'pure-honey': '/assets/aistudio/1_7a3bf903.png',
-  'magarantha-thean': '/assets/aistudio/1_f09ecd47.png',
+  'pure-honey': '/images/pure-honey-1.png',
+  'magarantha-thean': '/images/magarantha-thean-1.png',
   'malai-thean': '/images/malai_thean_bottle.jpg',
-  'mixed-nuts': '/assets/aistudio/2_6b73aea0.png',
-  'honey-amla': '/images/banaya_amla.webp',
-  'gulkand': '/assets/aistudio/3_6493340b.png',
+  'mixed-nuts': '/images/mixed-nuts-2.png',
+  'honey-amla': '/images/honey-amla-1.webp',
+  'gulkand': '/images/rose-gulkand-2.png',
   'karuppukavani-kanji': '/images/karuppu_kavuni_kanji_front.jpg',
   'mudavatukal-soup': '/images/mudavatukal_soup_front.jpeg',
   'murungai-leaf-powder': '/images/murungai_pouch_front.jpg',
   'curry-leaf-powder': '/images/curry_leaf_pouch_front.jpg',
-  'natural-soap': '/assets/aistudio/3_2e9e6c51.png',
-  'desi-cow-ghee': '/assets/aistudio/2_4b4979ee.png',
+  'natural-soap': '/images/natural-soap-3.png',
+  'desi-cow-ghee': '/images/desi-cow-ghee-2.png',
   'abc-malt': '/images/abc_malt_front.jpg'
 };
 
 const CATEGORY_FALLBACK_IMAGES: Record<string, string> = {
-  'honey-sweeteners': '/assets/aistudio/1_7a3bf903.png',
+  'honey-sweeteners': '/images/pure-honey-1.png',
   'health-drinks': '/images/abc_malt_front.jpg',
   'herbal-powders': '/images/murungai_pouch_front.jpg',
-  'ghee-foods': '/assets/aistudio/2_4b4979ee.png',
-  'nuts-dryfruits': '/assets/aistudio/2_6b73aea0.png',
-  'traditional-wellness': '/images/banaya_amla.webp',
-  'herbal-products': '/assets/aistudio/3_2e9e6c51.png'
+  'ghee-foods': '/images/desi-cow-ghee-2.png',
+  'nuts-dryfruits': '/images/mixed-nuts-2.png',
+  'traditional-wellness': '/images/honey-amla-1.webp',
+  'herbal-products': '/images/natural-soap-3.png'
 };
 
 export function getFallbackProductImage(

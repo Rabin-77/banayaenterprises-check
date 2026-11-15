@@ -10,7 +10,7 @@ import { optimizeImageToDataUrl } from '../utils/imageUpload';
 
 const SYNC_CHANNEL_NAME = 'banaya_store_sync';
 const CATALOG_VERSION_KEY = 'banaya_catalog_version';
-const CURRENT_CATALOG_VERSION = '2026-11-14-ordered-v5';
+const CURRENT_CATALOG_VERSION = '2026-11-15-static-images-v6';
 
 interface ToastMessage {
   id: string;

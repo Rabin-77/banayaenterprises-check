@@ -22,11 +22,11 @@
       "Wildflower",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/1_7a3bf903.png",
+    "image": "/images/pure-honey-1.png",
     "gallery": [
-      "/assets/aistudio/1_7a3bf903.png",
-      "/assets/aistudio/2_32470c6e.png",
-      "/assets/aistudio/3_25265580.png"
+      "/images/pure-honey-1.png",
+      "/images/pure-honey-2.png",
+      "/images/pure-honey-3.png"
     ],
     "description": "Banaya Enterprise 100% Pure Wildflower Honey is harvested directly from happy bees and natural honeycombs using traditional cold filtering without heating, pasteurization, or adulteration. Rich in natural bee pollen, live enzymes, and organic floral nectars, this golden nectar offers wholesome nutrition and natural sweetness for the entire family.",
     "ingredients": [
@@ -66,11 +66,11 @@
       "Wild Harvested",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/1_f09ecd47.png",
+    "image": "/images/magarantha-thean-1.png",
     "gallery": [
-      "/assets/aistudio/1_f09ecd47.png",
-      "/assets/aistudio/2_faea74dc.png",
-      "/assets/aistudio/3_7b95bfd7.png"
+      "/images/magarantha-thean-1.png",
+      "/images/magarantha-thean-2.png",
+      "/images/magarantha-thean-3.png"
     ],
     "description": "Magarantha Thean (Bee Pollen Honey) is naturally concentrated with active flower pollen collected by wild honey bees from diverse medicinal herbs in deep virgin forests. Unheated and free from added corn syrups, this dark amber elixir retains its natural living enzymes, flavonoids, and vital bio-nutrients.",
     "ingredients": [
@@ -115,7 +115,7 @@
     "image": "/images/malai_thean_bottle.jpg",
     "gallery": [
       "/images/malai_thean_bottle.jpg",
-      "/assets/aistudio/1_99cf5a09.webp",
+      "/images/malai-thean-1.webp",
       "/images/honeycomb_macro.jpg"
     ],
     "description": "Harvested ethically from giant wild rock bee colonies (Apis dorsata) nestled high in cliff precipices of the Eastern and Western Ghats. Malai Thean carries a rich, deep woody aroma and unparalleled therapeutic potency derived from wild medicinal hill herbs and tall mountain tree canopies.",
@@ -156,10 +156,10 @@
       "Zero Preservatives",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/2_6b73aea0.png",
+    "image": "/images/mixed-nuts-2.png",
     "gallery": [
-      "/assets/aistudio/2_6b73aea0.png",
-      "/assets/aistudio/3_de51924a.png"
+      "/images/mixed-nuts-2.png",
+      "/images/mixed-nuts-3.png"
     ],
     "description": "A luxurious master-blend of hand-selected Kashmiri Mamra Almonds, W240 Goa Cashew Nuts, Iranian Green Pistachios, Chilean Walnuts, Afghan Black Raisins, and nutrient-dense Pumpkin & Sunflower Seeds. Lightly slow-roasted without oil to seal in crunch and essential fatty acids.",
     "ingredients": [
@@ -205,11 +205,10 @@
       "Digestive Tonic",
       "Bestseller"
     ],
-    "image": "/images/banaya_amla.webp",
+    "image": "/images/honey-amla-1.webp",
     "gallery": [
-      "/images/banaya_amla.webp",
-      "/assets/aistudio/amla_bade78da.webp",
-      "/assets/aistudio/3_1f3dbf7a.png"
+      "/images/honey-amla-1.webp",
+      "/images/honey-amla-3.png"
     ],
     "description": "Whole organic wild Indian Gooseberries (Amla / Nellikai) pricked and steeped for months in pure raw multifloral honey. The natural astringency and sourness of fresh vitamin-rich Amla balances harmoniously with the sweet honey to create a delicious, therapeutic daily immunity booster.",
     "ingredients": [
@@ -252,9 +251,9 @@
       "No Refined Sugar",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/3_6493340b.png",
+    "image": "/images/rose-gulkand-2.png",
     "gallery": [
-      "/assets/aistudio/3_6493340b.png",
+      "/images/rose-gulkand-2.png",
       "/images/banaya_rose_gulkand.jpg"
     ],
     "description": "Slowly sun-cooked for 45 days in traditional glass containers using aromatic indigenous Damask Rose (Chaiti Gulab) petals, natural rock sugar (Dhaga Mishri), and pure raw honey. This authentic Ayurvedic preparation acts as a natural body coolant and digestive rejuvenator.",
@@ -303,7 +302,7 @@
     "gallery": [
       "/images/karuppu_kavuni_kanji_front.jpg",
       "/images/karuppu_kavuni_kanji_back.jpg",
-      "/assets/aistudio/2_a1d23cb5.png"
+      "/images/karuppu-kavuni-kanji-2.png"
     ],
     "description": "Banaya Enterprise Karuppu Kavuni Kanji Mix is an authentic traditional heritage porridge blend crafted from Ancient Karupu kavuni black rice, Poongar rice, Karuppu kollu, Pearl millet, Pepper, Moong dal, Jeera, and Garlic. Healthy, tasty, and nutritious mix for the whole family.",
     "ingredients": [
@@ -354,7 +353,7 @@
     "gallery": [
       "/images/mudavatukal_soup_front.jpeg",
       "/images/mudavatukal_soup_back.jpeg",
-      "/assets/aistudio/2_80fb4fd9.png"
+      "/images/mudavatukal-soup-2.png"
     ],
     "description": "Authentic Banaya Enterprises Mudavattukkal Soup Mix prepared with traditional Western Ghats Mudavattukal (Drynaria quercifolia / Oak-leaf fern rhizome) blended with wholesome moong dal and native spices. Highly esteemed in Siddha and folk traditions for relieving knee pain, joint stiffness, reducing inflammation, and maintaining healthy mobility.",
     "ingredients": [
@@ -408,7 +407,7 @@
     "gallery": [
       "/images/murungai_pouch_front.jpg",
       "/images/murungai_leaf_powder.jpg",
-      "/assets/aistudio/2_30f571b8.png"
+      "/images/murungai-leaf-powder-2.png"
     ],
     "description": "Banaya Enterprises Organic Murungai Keerai Powder is prepared from carefully selected native drumstick moringa leaves. 100% organic, gluten-free, with no additives. Formulated to boost natural immunity and maintain good eye health.",
     "ingredients": [
@@ -492,10 +491,10 @@
       "Cold Processed",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/3_2e9e6c51.png",
+    "image": "/images/natural-soap-3.png",
     "gallery": [
-      "/assets/aistudio/3_2e9e6c51.png",
-      "/assets/aistudio/2_b23bdfca.png"
+      "/images/natural-soap-3.png",
+      "/images/natural-soap-2.png"
     ],
     "description": "Cured naturally for 6 weeks, this artisanal cold-process bathing bar is formulated with pure wood-pressed coconut oil, fresh crushed neem leaves, sacred holy basil (Tulsi), raw turmeric, and unrefined Shea butter. Gently cleanses without stripping essential skin moisture.",
     "ingredients": [
@@ -540,9 +539,9 @@
       "Bilona Churned",
       "Bestseller"
     ],
-    "image": "/assets/aistudio/2_4b4979ee.png",
+    "image": "/images/desi-cow-ghee-2.png",
     "gallery": [
-      "/assets/aistudio/2_4b4979ee.png"
+      "/images/desi-cow-ghee-2.png"
     ],
     "description": "Prepared strictly through the ancient Vedic Bilona method: fresh whole milk from freely-grazed indigenous Indian Gir & Kangayam cows is cultured into curd, hand-churned with a wooden churner (Bilona) to separate cultured butter (Makkhan), and slow-boiled in brass cauldrons with moringa leaves to yield fragrant granular golden ghee.",
     "ingredients": [
@@ -588,7 +587,7 @@
       "/images/abc_malt_front.jpg",
       "/images/abc_malt_back.jpg",
       "/images/abc_malt_pouch.jpg",
-      "/assets/aistudio/3_7c33f12c.png",
+      "/images/abc-malt-2.png",
       "/images/abc_malt_poster.jpg"
     ],
     "description": "Banaya Enterprise Abc Malt is a wholesome blend of Apple, Beetroot, Carrot, Dates, Nuts & Seeds, Makhana, and Cane Jaggery. 100% natural, healthy, tasty, and nutritious for the entire family with zero added preservatives and no artificial flavours.",

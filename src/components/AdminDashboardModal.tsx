@@ -580,11 +580,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
       weightOptions: ['100g', '250g', '500g'],
       defaultWeight: '500g',
       badges: ['100% Pure', 'Small Batch'],
-      image: '/images/banaya_honey.jpg',
+      image: '/images/pure-honey-1.png',
       gallery: [
-        '/images/banaya_honey.jpg',
-        '/assets/aistudio/honey_web_1d34d9ea.jfif',
-        '/images/natural_honey_jar.jpg'
+        '/images/pure-honey-1.png',
+        '/images/pure-honey-2.png',
+        '/images/pure-honey-3.png'
       ],
       description: 'Handcrafted fresh natural formulation prepared using authentic traditional methods from Banaya Enterprise.',
       ingredients: ['100% Pure Native Botanical Ingredients'],
@@ -2606,7 +2606,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                             </p>
                             <button
                               type="button"
-                              onClick={() => handleAddSecondarySlot('/assets/aistudio/honey_web_1d34d9ea.jfif')}
+                              onClick={() => handleAddSecondarySlot('/images/pure-honey-2.png')}
                               className="px-3 py-1.5 bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
                             >
                               <Plus className="w-3.5 h-3.5" />

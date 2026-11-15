@@ -105,37 +105,37 @@ export const WHY_CHOOSE_US = [
 export const INSTAGRAM_POSTS = [
   {
     id: 'post-1',
-    image: '/assets/aistudio/2_a1d23cb5.png',
+    image: '/images/karuppu-kavuni-kanji-2.png',
     tag: 'Heritage Kanji',
     caption: 'Banaya Karuppu Kavuni Kanji Mix — steamed black rice porridge served fresh in a traditional clay pot.'
   },
   {
     id: 'post-2',
-    image: '/assets/aistudio/3_7c33f12c.png',
+    image: '/images/abc-malt-2.png',
     tag: 'Daily Wellness',
     caption: 'Banaya ABC Malt — real apple, beetroot, carrot & roasted cashews blended for wholesome family nutrition.'
   },
   {
     id: 'post-3',
-    image: '/assets/aistudio/2_b23bdfca.png',
+    image: '/images/natural-soap-2.png',
     tag: 'Zero Chemicals',
     caption: 'Banaya Enterprises handcrafted herbal bath bar — natural botanical oils & gentle Ayurvedic skin care.'
   },
   {
     id: 'post-4',
-    image: '/assets/aistudio/3_6493340b.png',
+    image: '/images/rose-gulkand-2.png',
     tag: 'Sun Curing',
     caption: 'Banaya Rose Gulkand — fragrant Damask rose petals infused with 100% pure wildflower honey.'
   },
   {
     id: 'post-5',
-    image: '/assets/aistudio/2_80fb4fd9.png',
+    image: '/images/mudavatukal-soup-2.png',
     tag: 'Joint Health',
     caption: 'Mudavattukkal Soup Mix — steaming hot traditional herbal rhizome broth for strength and joint comfort.'
   },
   {
     id: 'post-6',
-    image: '/assets/aistudio/2_6b73aea0.png',
+    image: '/images/mixed-nuts-2.png',
     tag: 'Raw Harvest',
     caption: 'Banaya Mixed Nuts Honey — crunchy roasted almonds, cashews & raisins steeped in 100% pure golden honey.'
   }
