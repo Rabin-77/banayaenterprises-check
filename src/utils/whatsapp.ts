@@ -17,18 +17,30 @@ export function formatOrderWhatsAppMessage(order: Order, transactionId?: string)
     })
     .join('\n');
 
-  return `🌿 *NEW PREPAID ORDER - BANAYANA ENTERPRISE* 🌿
-----------------------------------------
-✅ *PAYMENT STATUS: PAID SUCCESSFULLY*
-• *Payment Mode:* Online UPI QR (${BANAYA_UPI_ID})
-• *Amount Paid:* *₹${order.totalAmount}*
-${transactionId ? `• *UPI Ref / UTR:* ${transactionId}\n` : ''}• *Payment Verification:* Paid & Confirmed by Customer
+  const txnRef = (transactionId || order.transactionId || order.bankRef || '').trim();
+  const isVerified = order.status !== 'Processing';
+  const paymentHeader = isVerified
+    ? '✅ *PAYMENT VERIFIED & ORDER CONFIRMED*'
+    : '⏳ *PAYMENT STATUS: VERIFICATION PENDING*';
+  const orderStatusLabel = isVerified
+    ? `${order.status} (Payment Verified)`
+    : 'Processing (Awaiting Merchant Payment Verification)';
+  const actionFooter = isVerified
+    ? '🚚 *Action Required:* Payment is verified. Please pack and dispatch this order. Thank you!'
+    : `🔎 *Action Required:* Customer submitted ${order.paymentMethod}${txnRef ? ` (Ref: ${txnRef})` : ''}. Please verify receipt of ₹${order.totalAmount} to Banaya Enterprise (${BANAYA_UPI_ID}) and confirm dispatch.`;
 
+  return `🌿 *NEW ONLINE ORDER - BANAYA ENTERPRISE* 🌿
+----------------------------------------
+${paymentHeader}
+• *Payment Method:* ${order.paymentMethod}
+• *Payable Amount:* *₹${order.totalAmount}*
+• *Merchant UPI ID:* ${BANAYA_UPI_ID}
+${txnRef ? `• *Submitted Transaction / UTR ID:* ${txnRef}\n` : ''}
 📋 *ORDER DETAILS:*
 • *Order ID:* ${order.id}
 • *Date:* ${order.date}
 • *Tracking Code:* ${order.trackingNumber}
-• *Order Status:* Confirmed (Prepaid)
+• *Order Status:* ${orderStatusLabel}
 
 👤 *CUSTOMER SHIPPING DETAILS:*
 • *Name:* ${order.customerName}
@@ -43,9 +55,9 @@ ${itemsText}
 💰 *BILLING SUMMARY:*
 • *Subtotal:* ₹${order.subtotal}
 ${order.discount > 0 ? `• *Discount Applied:* -₹${order.discount}\n` : ''}• *Delivery Charge:* ${order.shipping === 0 ? 'FREE' : `₹${order.shipping}`}
-• *TOTAL AMOUNT PAID:* *₹${order.totalAmount}*
+• *ORDER TOTAL:* *₹${order.totalAmount}*
 ----------------------------------------
-🚚 *Action Required:* Payment is completed via UPI QR. Please pack and dispatch this order. Thank you!`;
+${actionFooter}`;
 }
 
 /**
@@ -76,9 +88,9 @@ export function formatProductBookingMessage(params: {
   const { product, selectedWeight, quantity, price, customerName, customerPhone, customerCity, paidViaUpi } = params;
   const totalPrice = price * quantity;
 
-  let msg = `🌿 *${paidViaUpi ? 'PREPAID PRODUCT ORDER' : 'PRODUCT INQUIRY'} - BANAYANA ENTERPRISE* 🌿
+  let msg = `🌿 *${paidViaUpi ? 'PREPAID PRODUCT ORDER' : 'PRODUCT INQUIRY'} - BANAYA ENTERPRISE* 🌿
 ----------------------------------------
-${paidViaUpi ? `✅ *PAYMENT STATUS: PAID VIA UPI QR*\n• *Amount:* ₹${totalPrice}\n• *UPI ID:* ${BANAYA_UPI_ID}\n----------------------------------------\n` : ''}🛍️ *PRODUCT DETAILS:*
+${paidViaUpi ? `⏳ *PAYMENT STATUS: VERIFICATION PENDING*\n• *Amount:* ₹${totalPrice}\n• *Merchant UPI ID:* ${BANAYA_UPI_ID}\n----------------------------------------\n` : ''}🛍️ *PRODUCT DETAILS:*
 • *Product Name:* ${product.name}
 ${product.tamilName ? `• *Tamil Name:* ${product.tamilName}\n` : ''}• *Category:* ${product.category}
 • *Selected Pack:* ${selectedWeight}
@@ -94,7 +106,7 @@ ${product.tamilName ? `• *Tamil Name:* ${product.tamilName}\n` : ''}• *Categ
   }
 
   msg += `\n\n----------------------------------------
-Hello Banayana Enterprise, ${paidViaUpi ? 'I have completed the payment via UPI QR. Please confirm dispatch.' : 'I want to book this product. Please share confirmation and delivery details!'}`;
+Hello Banaya Enterprise, ${paidViaUpi ? 'I have submitted my online payment. Please verify and confirm dispatch.' : 'I want to book this product. Please share confirmation and delivery details!'}`;
 
   return msg;
 }

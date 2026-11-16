@@ -460,6 +460,57 @@
         "email",
         "createdAt"
       ]
+    },
+    "OrderStatusPublic": {
+      "title": "OrderStatusPublic",
+      "description": "Non-PII payment verification and shipment milestone status for real-time customer tracking.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Order ID matching /orders/{orderId}",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Order fulfillment status",
+          "enum": [
+            "Processing",
+            "Confirmed",
+            "Shipped",
+            "Out for Delivery",
+            "Delivered"
+          ]
+        },
+        "paymentVerified": {
+          "type": "boolean",
+          "description": "Whether store admin has verified payment settlement"
+        },
+        "trackingNumber": {
+          "type": "string",
+          "description": "Courier tracking code",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last status update timestamp"
+        }
+      },
+      "required": [
+        "orderId",
+        "status",
+        "paymentVerified",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -498,6 +549,12 @@
         "$ref": "#/entities/AdminUser"
       },
       "description": "Store administrator access control documents."
+    },
+    "/orderStatus/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/OrderStatusPublic"
+      },
+      "description": "Non-PII live payment verification and tracking status readable by exact Order ID."
     }
   }
 }

@@ -131,8 +131,13 @@ export const AccountModal: React.FC = () => {
                         <strong className="text-sm text-slate-950">₹{order.totalAmount}</strong>
                       </div>
                       <div>
-                        <span className="inline-block px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          ● {order.status}
+                        <span className="text-[11px] text-slate-500 block">Status</span>
+                        <span
+                          className={`text-xs font-bold ${
+                            order.status === 'Processing' ? 'text-amber-700' : 'text-emerald-700'
+                          }`}
+                        >
+                          {order.status === 'Processing' ? 'Verification Pending' : order.status}
                         </span>
                       </div>
                     </div>
@@ -161,6 +166,11 @@ export const AccountModal: React.FC = () => {
                     <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <span className="text-[11px] text-slate-500">
                         Tracking: <strong className="font-mono text-emerald-800">{order.trackingNumber}</strong>
+                        {(order.transactionId || order.bankRef) && (
+                          <span className="ml-2">
+                            · Ref: <strong className="font-mono text-slate-700">{order.transactionId || order.bankRef}</strong>
+                          </span>
+                        )}
                       </span>
                       <div className="flex items-center gap-2">
                         <button

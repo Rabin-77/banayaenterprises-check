@@ -231,7 +231,7 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow create: if isValidId(orderId) &&
         isValidOrder(incoming(), orderId) &&
-        incoming().status in ['Processing', 'Confirmed'] &&
+        (incoming().status == 'Processing' || (isAdmin() && incoming().status in ['Processing', 'Confirmed'])) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
       allow update: if isAdmin() &&
@@ -284,6 +284,37 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().diff(existing()).affectedKeys().hasOnly(['email']);
       allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    function isValidOrderStatus(data, orderId) {
+      return data.keys().hasAll(['orderId', 'status', 'paymentVerified', 'createdAt', 'updatedAt']) &&
+      data.keys().hasOnly(['orderId', 'status', 'paymentVerified', 'trackingNumber', 'createdAt', 'updatedAt']) &&
+      isValidId(data.orderId) &&
+      data.orderId == orderId &&
+      data.status in ['Processing', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered'] &&
+      data.paymentVerified is bool &&
+      (!('trackingNumber' in data) || (data.trackingNumber is string && data.trackingNumber.size() <= 100)) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    // 6. Non-PII Live Payment Verification & Order Status (Exact ID Read, Admin Verify Write)
+    match /orderStatus/{orderId} {
+      allow get: if isValidId(orderId);
+      allow list: if false;
+      allow create: if isValidId(orderId) &&
+        isValidOrderStatus(incoming(), orderId) &&
+        ((incoming().status == 'Processing' && incoming().paymentVerified == false) || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(orderId) &&
+        isValidOrderStatus(incoming(), orderId) &&
+        incoming().orderId == existing().orderId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentVerified', 'trackingNumber', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(orderId);
     }
   }
 }

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, CheckCircle2, Truck, MapPin, MessageCircle, AlertCircle } from 'lucide-react';
+import { X, Search, CheckCircle2, Truck, MapPin, MessageCircle, AlertCircle, Clock } from 'lucide-react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useShop } from '../context/ShopContext';
 import { Order } from '../types';
 import { DISPLAY_PHONE_NUMBER, openWhatsAppUrl } from '../utils/whatsapp';
@@ -12,9 +14,17 @@ const STATUS_STAGE_INDEX: Record<Order['status'], number> = {
   Delivered: 4
 };
 
+interface PublicOrderStatusDoc {
+  orderId: string;
+  status: Order['status'];
+  paymentVerified: boolean;
+  trackingNumber?: string;
+}
+
 export const OrderTrackModal: React.FC = () => {
   const { activeModal, setActiveModal, orders, trackingLookupId, setTrackingLookupId } = useShop();
   const [lookupId, setLookupId] = useState(trackingLookupId || orders[0]?.id || '');
+  const [cloudStatus, setCloudStatus] = useState<PublicOrderStatusDoc | null>(null);
 
   useEffect(() => {
     if (activeModal === 'trackOrder') {
@@ -22,53 +32,97 @@ export const OrderTrackModal: React.FC = () => {
     }
   }, [activeModal, trackingLookupId, orders]);
 
-  if (activeModal !== 'trackOrder') return null;
+  const trimmedQuery = lookupId.trim();
+  const lowerQuery = trimmedQuery.toLowerCase();
 
-  const trimmedQuery = lookupId.trim().toLowerCase();
-  const currentOrder = trimmedQuery
+  const localMatchedOrder = lowerQuery
     ? orders.find(
         (o) =>
-          o.id.toLowerCase() === trimmedQuery ||
-          o.trackingNumber.toLowerCase() === trimmedQuery
+          o.id.toLowerCase() === lowerQuery ||
+          o.trackingNumber.toLowerCase() === lowerQuery
       ) || null
     : orders[0] || null;
 
-  const stageIdx = currentOrder ? (STATUS_STAGE_INDEX[currentOrder.status] ?? 0) : 0;
+  // Listen live to non-PII /orderStatus/{orderId} for real verification & shipment status
+  const activeOrderIdForCloud = localMatchedOrder?.id || (trimmedQuery && /^[a-zA-Z0-9_-]{3,128}$/.test(trimmedQuery) ? trimmedQuery.toUpperCase() : '');
 
-  const steps = currentOrder
+  useEffect(() => {
+    if (activeModal !== 'trackOrder' || !activeOrderIdForCloud) {
+      setCloudStatus(null);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      doc(db, 'orderStatus', activeOrderIdForCloud),
+      (snap) => {
+        if (snap.exists()) {
+          setCloudStatus(snap.data() as PublicOrderStatusDoc);
+        } else {
+          setCloudStatus(null);
+        }
+      },
+      () => {
+        setCloudStatus(null);
+      }
+    );
+
+    return () => unsub();
+  }, [activeModal, activeOrderIdForCloud]);
+
+  if (activeModal !== 'trackOrder') return null;
+
+  const effectiveStatus: Order['status'] | null =
+    cloudStatus?.status || localMatchedOrder?.status || null;
+  const effectiveTrackingNumber =
+    cloudStatus?.trackingNumber || localMatchedOrder?.trackingNumber || 'Assigned after verification';
+  const effectivePaymentVerified =
+    cloudStatus !== null
+      ? cloudStatus.paymentVerified
+      : localMatchedOrder
+        ? localMatchedOrder.status !== 'Processing'
+        : false;
+
+  const hasOrderToDisplay = Boolean(localMatchedOrder || cloudStatus);
+  const stageIdx = effectiveStatus ? (STATUS_STAGE_INDEX[effectiveStatus] ?? 0) : 0;
+
+  const steps = hasOrderToDisplay
     ? [
         {
-          label: 'Order Placed & Processing',
-          time: currentOrder.date,
+          label: 'Order & Payment Reference Submitted',
+          time: localMatchedOrder?.date || 'Submitted',
           done: stageIdx >= 0,
-          desc: 'Order received and queued for fresh batch packing'
+          desc: 'Order received along with your submitted Transaction / UTR reference'
         },
         {
-          label: 'Payment Verified & Packed',
-          time: stageIdx >= 1 ? currentOrder.date : 'Pending confirmation',
-          done: stageIdx >= 1,
-          desc: 'Quality-sealed in hygienic food-grade packaging'
+          label: effectivePaymentVerified ? 'Payment Verified & Order Confirmed' : 'Payment Verification Pending',
+          time: effectivePaymentVerified ? 'Verified by Merchant' : 'Awaiting verification',
+          done: effectivePaymentVerified && stageIdx >= 1,
+          desc: effectivePaymentVerified
+            ? 'Payment confirmed in Banaya Enterprise merchant account & queued for packing'
+            : 'Our team is verifying your transfer before dispatching your order'
         },
         {
           label: 'Handed to Express Courier',
-          time: stageIdx >= 2 ? `Tracking: ${currentOrder.trackingNumber}` : 'Awaiting dispatch',
+          time: stageIdx >= 2 ? `Tracking: ${effectiveTrackingNumber}` : 'Awaiting dispatch',
           done: stageIdx >= 2,
           desc: 'Dispatched via BlueDart / India Post Express'
         },
         {
           label: 'Out for Doorstep Delivery',
-          time: stageIdx >= 3 ? `Arriving in ${currentOrder.city}` : 'In transit',
+          time: stageIdx >= 3 ? `Arriving in ${localMatchedOrder?.city || 'your city'}` : 'In transit',
           done: stageIdx >= 3,
-          desc: `Local delivery partner assigned in ${currentOrder.city}`
+          desc: `Local delivery partner assigned${localMatchedOrder?.city ? ` in ${localMatchedOrder.city}` : ''}`
         },
         {
           label: 'Delivered',
-          time: stageIdx >= 4 ? 'Completed' : 'Estimated 2–4 business days',
+          time: stageIdx >= 4 ? 'Completed' : 'Estimated 2–4 business days after verification',
           done: stageIdx >= 4,
           desc: 'Delivered safely to customer destination'
         }
       ]
     : [];
+
+  const displayOrderId = localMatchedOrder?.id || cloudStatus?.orderId || '';
 
   return (
     <div
@@ -88,13 +142,14 @@ export const OrderTrackModal: React.FC = () => {
             </div>
             <div>
               <h2 className="font-heading text-xl sm:text-2xl font-bold text-slate-950">
-                Track Your Shipment
+                Track Your Order
               </h2>
-              <span className="text-xs text-slate-500">Real-time parcel delivery status</span>
+              <span className="text-xs text-slate-500">Live payment verification &amp; shipment status</span>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={() => setActiveModal(null)}
             className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:text-slate-900 flex items-center justify-center hover:bg-slate-200 transition-colors cursor-pointer"
           >
@@ -116,7 +171,7 @@ export const OrderTrackModal: React.FC = () => {
                 type="text"
                 value={lookupId}
                 onChange={(e) => setLookupId(e.target.value)}
-                placeholder="Enter Order ID (e.g. STM-84920) or Tracking No."
+                placeholder="Enter Order ID (e.g. BNY-12345) or Tracking No."
                 className="w-full pl-10 pr-4 py-2.5 bg-white text-xs sm:text-sm text-slate-900 rounded-xl border border-slate-200 focus:outline-hidden focus:border-emerald-600"
               />
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
@@ -129,7 +184,7 @@ export const OrderTrackModal: React.FC = () => {
             </button>
           </form>
 
-          {/* Recent Quick Select Chips */}
+          {/* Recent Quick Select */}
           {orders.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <span className="text-slate-500 font-medium mr-1">Recent orders:</span>
@@ -141,8 +196,8 @@ export const OrderTrackModal: React.FC = () => {
                     setLookupId(ord.id);
                     setTrackingLookupId(ord.id);
                   }}
-                  className={`px-2.5 py-1 rounded-full font-mono font-semibold border transition-colors cursor-pointer ${
-                    currentOrder?.id === ord.id
+                  className={`px-2.5 py-1 rounded-md font-mono font-semibold border transition-colors cursor-pointer ${
+                    displayOrderId === ord.id
                       ? 'bg-[#064E3B] text-white border-[#064E3B]'
                       : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-500'
                   }`}
@@ -153,68 +208,103 @@ export const OrderTrackModal: React.FC = () => {
             </div>
           )}
 
-          {currentOrder ? (
+          {hasOrderToDisplay && effectiveStatus ? (
             <div className="space-y-6">
               {/* Summary Header */}
               <div className="p-4 bg-white rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                 <div>
-                  <span className="text-[11px] text-slate-500 block">Tracking Number</span>
-                  <strong className="text-sm font-mono text-slate-950">{currentOrder.trackingNumber}</strong>
+                  <span className="text-[11px] text-slate-500 block">Order ID / Tracking</span>
+                  <strong className="text-sm font-mono text-slate-950">
+                    {displayOrderId} &middot; {effectiveTrackingNumber}
+                  </strong>
                 </div>
-                {currentOrder.transactionId && (
+                {localMatchedOrder?.transactionId && (
                   <div>
-                    <span className="text-[11px] text-slate-500 block">Transaction ID</span>
-                    <strong className="text-xs font-mono text-emerald-800">{currentOrder.transactionId}</strong>
+                    <span className="text-[11px] text-slate-500 block">Transaction / UTR ID</span>
+                    <strong className="text-xs font-mono text-slate-800">{localMatchedOrder.transactionId}</strong>
                   </div>
                 )}
                 <div>
-                  <span className="text-[11px] text-slate-500 block">Status</span>
-                  <span className="text-xs font-bold text-emerald-800">{currentOrder.status}</span>
+                  <span className="text-[11px] text-slate-500 block">Order Status</span>
+                  <span className={`text-xs font-bold ${effectivePaymentVerified ? 'text-emerald-800' : 'text-amber-700'}`}>
+                    {effectiveStatus}
+                  </span>
                 </div>
                 <div>
                   <span className="text-[11px] text-slate-500 block">Payment Status</span>
-                  <strong className="text-xs text-emerald-700 font-bold">PAID (₹{currentOrder.totalAmount})</strong>
+                  {effectivePaymentVerified ? (
+                    <strong className="text-xs text-emerald-700 font-bold">
+                      Verified{localMatchedOrder ? ` (₹${localMatchedOrder.totalAmount})` : ''}
+                    </strong>
+                  ) : (
+                    <strong className="text-xs text-amber-700 font-bold">
+                      Verification Pending{localMatchedOrder ? ` (₹${localMatchedOrder.totalAmount})` : ''}
+                    </strong>
+                  )}
                 </div>
               </div>
 
               {/* Timeline */}
               <div className="p-5 bg-white rounded-2xl border border-slate-200 space-y-4 shadow-2xs">
                 <h4 className="font-heading font-bold text-sm text-slate-950 mb-3">
-                  Shipment Journey
+                  Order &amp; Verification Timeline
                 </h4>
 
                 <div className="space-y-6 relative before:absolute before:left-4 before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200">
-                  {steps.map((step, idx) => (
-                    <div key={idx} className="relative flex items-start gap-4 pl-2">
-                      <div
-                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${
-                          step.done ? 'bg-emerald-600 text-white' : 'bg-slate-100 border border-slate-300 text-slate-400'
-                        }`}
-                      >
-                        {step.done ? <CheckCircle2 className="w-3.5 h-3.5" /> : <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />}
-                      </div>
-
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-1">
-                          <h5 className={`text-xs sm:text-sm font-bold ${step.done ? 'text-slate-950' : 'text-slate-400'}`}>
-                            {step.label}
-                          </h5>
-                          <span className="text-[11px] text-slate-400">{step.time}</span>
+                  {steps.map((step, idx) => {
+                    const isPendingVerificationStep = idx === 1 && !effectivePaymentVerified;
+                    return (
+                      <div key={idx} className="relative flex items-start gap-4 pl-2">
+                        <div
+                          className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${
+                            step.done
+                              ? 'bg-emerald-600 text-white'
+                              : isPendingVerificationStep
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-slate-100 border border-slate-300 text-slate-400'
+                          }`}
+                        >
+                          {step.done ? (
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          ) : isPendingVerificationStep ? (
+                            <Clock className="w-3 h-3" />
+                          ) : (
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                          )}
                         </div>
-                        <p className="text-xs text-slate-600 mt-0.5">{step.desc}</p>
+
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center justify-between gap-1">
+                            <h5
+                              className={`text-xs sm:text-sm font-bold ${
+                                step.done
+                                  ? 'text-slate-950'
+                                  : isPendingVerificationStep
+                                    ? 'text-amber-800'
+                                    : 'text-slate-400'
+                              }`}
+                            >
+                              {step.label}
+                            </h5>
+                            <span className="text-[11px] text-slate-400">{step.time}</span>
+                          </div>
+                          <p className="text-xs text-slate-600 mt-0.5">{step.desc}</p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Delivery Address Preview */}
-              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200/80 text-xs text-slate-700 flex items-start gap-2.5">
-                <MapPin className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <div>
-                  <strong>Destination:</strong> {currentOrder.shippingAddress}, {currentOrder.city} - {currentOrder.postalCode}
+              {/* Delivery Address Preview (only shown for orders placed on this device) */}
+              {localMatchedOrder && (
+                <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200/80 text-xs text-slate-700 flex items-start gap-2.5">
+                  <MapPin className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Destination:</strong> {localMatchedOrder.shippingAddress}, {localMatchedOrder.city} - {localMatchedOrder.postalCode}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* WhatsApp Support Callout */}
               <div className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-2xs">
@@ -223,13 +313,14 @@ export const OrderTrackModal: React.FC = () => {
                     <MessageCircle className="w-4 h-4 fill-current" />
                   </div>
                   <div>
-                    <span className="font-bold text-slate-900 block">Need urgent delivery assistance?</span>
-                    <span className="text-slate-500 text-[11px]">Chat with our dispatch desk on WhatsApp ({DISPLAY_PHONE_NUMBER})</span>
+                    <span className="font-bold text-slate-900 block">Need payment or delivery assistance?</span>
+                    <span className="text-slate-500 text-[11px]">Chat with our desk on WhatsApp ({DISPLAY_PHONE_NUMBER})</span>
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
-                    const text = `Hello Banayana Enterprise, please give me a quick delivery update for my Order ID ${currentOrder.id} (Tracking: ${currentOrder.trackingNumber}).`;
+                    const text = `Hello Banaya Enterprise, please give me a status update for my Order ID ${displayOrderId} (Tracking: ${effectiveTrackingNumber}).`;
                     openWhatsAppUrl(`https://wa.me/918838598172?text=${encodeURIComponent(text)}`);
                   }}
                   className="w-full sm:w-auto px-4 py-2 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"

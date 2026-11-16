@@ -274,7 +274,7 @@ export const CartDrawer: React.FC = () => {
 
             <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Instant UPI QR Payment • Fast Delivery Dispatch</span>
+              <span>Net Banking &amp; UPI Payment • Fast Delivery Dispatch</span>
             </div>
 
           </div>

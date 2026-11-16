@@ -1708,55 +1708,85 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                           <th className="py-3 px-4">Order ID</th>
                           <th className="py-3 px-4">Date</th>
                           <th className="py-3 px-4">Customer</th>
+                          <th className="py-3 px-4">Payment / UTR</th>
                           <th className="py-3 px-4">Total</th>
                           <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Tracking</th>
                           <th className="py-3 px-4 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
-                        {filteredOrders.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-slate-50/70">
-                            <td className="py-3 px-4 font-mono text-xs font-medium text-slate-900">
-                              {ord.id}
-                            </td>
-                            <td className="py-3 px-4 text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                              {ord.date}
-                            </td>
-                            <td className="py-3 px-4">
-                              <p className="text-slate-900 font-medium">{ord.customerName}</p>
-                              <p className="text-xs text-slate-500">{ord.phone}</p>
-                            </td>
-                            <td className="py-3 px-4 font-medium text-slate-900 tabular-nums">
-                              &#8377;{ord.totalAmount.toLocaleString('en-IN')}
-                            </td>
-                            <td className="py-3 px-4 text-xs font-medium text-slate-700">
-                              {ord.status}
-                            </td>
-                            <td className="py-3 px-4 font-mono text-xs text-slate-500">
-                              {ord.trackingNumber || '—'}
-                            </td>
-                            <td className="py-3 px-4 text-right whitespace-nowrap">
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => openOrderEditor(ord)}
-                                  className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 cursor-pointer"
-                                >
-                                  Update
-                                </button>
-                                {confirmDeleteOrderId === ord.id ? (
-                                  <span className="inline-flex items-center gap-1">
+                        {filteredOrders.map((ord) => {
+                          const txnRef = ord.transactionId || ord.bankRef || '';
+                          const isPendingVerification = ord.status === 'Processing';
+                          return (
+                            <tr key={ord.id} className="hover:bg-slate-50/70">
+                              <td className="py-3 px-4">
+                                <div className="font-mono text-xs font-medium text-slate-900">
+                                  {ord.id}
+                                </div>
+                                <div className="font-mono text-[11px] text-slate-400">
+                                  {ord.trackingNumber || '—'}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                                {ord.date}
+                              </td>
+                              <td className="py-3 px-4">
+                                <p className="text-slate-900 font-medium">{ord.customerName}</p>
+                                <p className="text-xs text-slate-500">{ord.phone}</p>
+                              </td>
+                              <td className="py-3 px-4">
+                                <p className="text-xs text-slate-700 truncate max-w-[180px]" title={ord.paymentMethod}>
+                                  {ord.paymentMethod}
+                                </p>
+                                <p className="font-mono text-xs font-medium text-slate-900">
+                                  {txnRef || 'No UTR'}
+                                </p>
+                              </td>
+                              <td className="py-3 px-4 font-medium text-slate-900 tabular-nums">
+                                &#8377;{ord.totalAmount.toLocaleString('en-IN')}
+                              </td>
+                              <td className="py-3 px-4 text-xs font-medium">
+                                {isPendingVerification ? (
+                                  <span className="text-amber-700 font-semibold">
+                                    Verification Pending
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-700 font-semibold">
+                                    {ord.status}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-2">
+                                  {isPendingVerification && (
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        deleteOrder(ord.id);
-                                        setConfirmDeleteOrderId(null);
-                                      }}
-                                      className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium"
+                                      onClick={() => updateOrderStatus(ord.id, 'Confirmed', ord.trackingNumber)}
+                                      className="px-2.5 py-1.5 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
                                     >
-                                      Delete
+                                      Verify &amp; Confirm
                                     </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => openOrderEditor(ord)}
+                                    className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 cursor-pointer"
+                                  >
+                                    Update
+                                  </button>
+                                  {confirmDeleteOrderId === ord.id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          deleteOrder(ord.id);
+                                          setConfirmDeleteOrderId(null);
+                                        }}
+                                        className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium"
+                                      >
+                                        Delete
+                                      </button>
                                     <button
                                       type="button"
                                       onClick={() => setConfirmDeleteOrderId(null)}
@@ -1775,10 +1805,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                     <Trash2 className="w-4 h-4" />
                                   </button>
                                 )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                         {filteredOrders.length === 0 && (
                           <tr>
                             <td colSpan={7} className="py-10 text-center text-sm text-slate-500">
@@ -2530,6 +2561,39 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             </div>
 
             <div className="p-5 space-y-4 text-sm">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Order Total</span>
+                  <strong className="text-slate-900 tabular-nums">&#8377;{editingOrder.totalAmount.toLocaleString('en-IN')}</strong>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Payment Method</span>
+                  <span className="font-medium text-slate-800 text-right">{editingOrder.paymentMethod}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Customer UTR / Txn ID</span>
+                  <code className="font-mono font-semibold text-slate-900">
+                    {editingOrder.transactionId || editingOrder.bankRef || 'Not provided'}
+                  </code>
+                </div>
+                {editingOrder.status === 'Processing' && (
+                  <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-2">
+                    <span className="text-amber-700 font-medium">Awaiting Payment Verification</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderDraftStatus('Confirmed');
+                        updateOrderStatus(editingOrder.id, 'Confirmed', orderDraftTracking, orderDraftNote);
+                        setEditingOrder(null);
+                      }}
+                      className="px-2.5 py-1 rounded bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
+                    >
+                      Verify &amp; Confirm Now
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Order Status

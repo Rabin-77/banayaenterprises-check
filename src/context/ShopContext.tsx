@@ -739,6 +739,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const orderBatch = writeBatch(db);
         for (const ord of sampleOrders) {
           const cleanOrderId = sanitizeFirestoreId(ord.id, 'ord');
+          const mappedStatus = ord.status === 'Delivered' || ord.status === 'Shipped' ? 'Confirmed' : ord.status;
           orderBatch.set(doc(db, 'orders', cleanOrderId), {
             id: cleanOrderId,
             date: ord.date,
@@ -756,7 +757,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             discount: ord.discount,
             shipping: ord.shipping,
             totalAmount: ord.totalAmount,
-            status: ord.status === 'Delivered' || ord.status === 'Shipped' ? 'Confirmed' : ord.status,
+            status: mappedStatus,
             customerName: ord.customerName,
             phone: ord.phone,
             email: ord.email || '',
@@ -764,6 +765,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
             city: ord.city,
             postalCode: ord.postalCode,
             paymentMethod: ord.paymentMethod,
+            trackingNumber: ord.trackingNumber || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          orderBatch.set(doc(db, 'orderStatus', cleanOrderId), {
+            orderId: cleanOrderId,
+            status: mappedStatus,
+            paymentVerified: mappedStatus !== 'Processing',
             trackingNumber: ord.trackingNumber || '',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
@@ -1174,8 +1183,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }): Order => {
     const orderNumber = Math.floor(10000 + Math.random() * 90000);
     const trackingCode = `BNY${Math.floor(10000000 + Math.random() * 90000000)}IN`;
-    const txnId = details.transactionId || `TXN-BNY-${Date.now().toString().slice(-6)}`;
-    const bankRef = details.bankRef || `SBI${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+    const submittedTxnId = clampString((details.transactionId || details.bankRef || '').trim(), 120);
+    const submittedBankRef = clampString((details.bankRef || details.transactionId || '').trim(), 120);
     const cleanId = sanitizeFirestoreId(`BNY-${orderNumber}`, 'BNY');
 
     const newOrder: Order = {
@@ -1186,24 +1195,24 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       discount: cartDiscount,
       shipping: cartShipping,
       totalAmount: cartTotal,
-      status: 'Confirmed',
+      status: 'Processing',
       customerName: clampString(details.customerName, 160) || 'Customer',
       phone: clampString(details.phone, 40) || '0000000000',
       email: clampString(details.email, 160),
       shippingAddress: clampString(details.shippingAddress, 400) || 'Address Provided',
       city: clampString(details.city, 100) || 'Tamil Nadu',
       postalCode: clampString(details.postalCode, 20) || '600001',
-      paymentMethod: clampString(details.paymentMethod, 160) || 'UPI',
+      paymentMethod: clampString(details.paymentMethod, 160) || 'UPI Payment',
       trackingNumber: trackingCode,
-      transactionId: txnId,
-      bankRef
+      transactionId: submittedTxnId,
+      bankRef: submittedBankRef
     };
 
     setOrders((prev) => [newOrder, ...prev]);
     clearCart();
     setAppliedCoupon(null);
 
-    // Push order directly to Firestore so Admin sees live orders from Vercel
+    // Push order directly to Firestore as Processing (awaiting merchant verification)
     const firestoreOrderPayload = {
       id: newOrder.id,
       date: newOrder.date,
@@ -1221,7 +1230,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       discount: Number(newOrder.discount) || 0,
       shipping: Number(newOrder.shipping) || 0,
       totalAmount: Number(newOrder.totalAmount) || 0,
-      status: 'Confirmed',
+      status: 'Processing',
       customerName: newOrder.customerName,
       phone: newOrder.phone,
       email: newOrder.email || '',
@@ -1236,7 +1245,19 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: serverTimestamp()
     };
 
-    void setDoc(doc(db, 'orders', cleanId), firestoreOrderPayload).catch((err) => {
+    const publicStatusPayload = {
+      orderId: cleanId,
+      status: 'Processing',
+      paymentVerified: false,
+      trackingNumber: newOrder.trackingNumber || '',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    void Promise.all([
+      setDoc(doc(db, 'orders', cleanId), firestoreOrderPayload),
+      setDoc(doc(db, 'orderStatus', cleanId), publicStatusPayload)
+    ]).catch((err) => {
       console.warn('Firestore order sync note:', err);
     });
 
@@ -1608,6 +1629,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Order & Customer Management (Admin -> Cloud Firestore)
   const updateOrderStatus = (orderId: string, status: Order['status'], trackingNumber?: string, note?: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
+    const existingOrder = orders.find((o) => o.id === orderId);
+    const resolvedTracking = clampString(
+      trackingNumber !== undefined ? trackingNumber : existingOrder?.trackingNumber || '',
+      100
+    );
+
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
@@ -1644,13 +1671,38 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (isCloudAdmin) {
+      const paymentVerified = status !== 'Processing';
       void updateDoc(doc(db, 'orders', cleanOrderId), {
         status,
-        trackingNumber: clampString(trackingNumber, 100),
+        trackingNumber: resolvedTracking,
         updatedAt: serverTimestamp()
       }).catch((err) => {
         handleFirestoreError(err, OperationType.UPDATE, `orders/${cleanOrderId}`);
       });
+
+      const statusRef = doc(db, 'orderStatus', cleanOrderId);
+      void getDoc(statusRef)
+        .then((snap) => {
+          if (snap.exists()) {
+            return updateDoc(statusRef, {
+              status,
+              paymentVerified,
+              trackingNumber: resolvedTracking,
+              updatedAt: serverTimestamp()
+            });
+          }
+          return setDoc(statusRef, {
+            orderId: cleanOrderId,
+            status,
+            paymentVerified,
+            trackingNumber: resolvedTracking,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        })
+        .catch((err) => {
+          handleFirestoreError(err, OperationType.WRITE, `orderStatus/${cleanOrderId}`);
+        });
     }
 
     showToast('Order Updated', `Order ${orderId} updated to "${status}".`, 'success');
@@ -1662,6 +1714,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isCloudAdmin) {
       void deleteDoc(doc(db, 'orders', cleanOrderId)).catch((err) => {
         handleFirestoreError(err, OperationType.DELETE, `orders/${cleanOrderId}`);
+      });
+      void deleteDoc(doc(db, 'orderStatus', cleanOrderId)).catch(() => {
+        // ignore if status doc absent
       });
     }
     showToast('Order Removed', `Order ${orderId} deleted from records.`, 'info');
