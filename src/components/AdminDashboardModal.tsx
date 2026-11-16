@@ -1,18 +1,40 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Lock, Eye, EyeOff, LayoutDashboard, Package,
-  Users, ShoppingBag, TrendingUp, Search, Plus, Edit2, Trash2,
-  CheckCircle2, Truck, AlertCircle, X, Save, ChevronRight,
-  ExternalLink, Phone, Mail, MapPin, DollarSign,
-  Check, MessageCircle, LogOut,
-  Layers, FileSpreadsheet, Upload, Image as ImageIcon,
-  Camera, FolderOpen, FolderPlus, Images
+  X,
+  LayoutDashboard,
+  Package,
+  FolderOpen,
+  ShoppingBag,
+  Users,
+  Search,
+  Plus,
+  Trash2,
+  Upload,
+  FolderUp,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Copy,
+  LogOut,
+  AlertCircle,
+  Loader2,
+  ArrowUpRight,
+  ImagePlus,
+  Eye,
+  EyeOff,
+  Mail,
+  Lock
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { Product, Order } from '../types';
 import { CATEGORIES } from '../data/categories';
-import { AdminAuthError, uploadProductImage } from '../utils/imageUpload';
-import { clearAdminSession, hasAdminSession, setAdminSessionPasskey } from '../utils/adminAuth';
+import { ADMIN_EMAIL, ADMIN_EMAILS, FIREBASE_PROJECT_ID } from '../firebase';
+import {
+  uploadProductImage,
+  calculateGalleryByteSize,
+  MAX_PRODUCT_GALLERY_BYTES
+} from '../utils/imageUpload';
 import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 interface AdminDashboardModalProps {
@@ -20,14 +42,42 @@ interface AdminDashboardModalProps {
   onClose: () => void;
 }
 
+type AdminTab = 'overview' | 'products' | 'folders' | 'orders' | 'customers';
+
+const ORDER_STATUSES: Order['status'][] = [
+  'Processing',
+  'Confirmed',
+  'Shipped',
+  'Out for Delivery',
+  'Delivered'
+];
+
 export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen, onClose }) => {
   const {
+    authReady,
+    firebaseUser,
+    isCloudAdmin,
+    adminAuthError,
+    unauthorizedDomain,
+    emailPasswordProviderDisabled,
+    pendingVerificationEmail,
+    canAttemptFirstTimeSetup,
+    signInWithEmailAdmin,
+    registerFirstAdminAccount,
+    resendAdminVerificationEmail,
+    refreshAdminVerificationStatus,
+    signInWithGoogleAdmin,
+    signOutAdmin,
+    clearAdminAuthError,
+    serverSynced,
+    lastSyncedAt,
     products,
     orders,
+    adminNotes,
+    mediaFolders,
     updateProduct,
     addProduct,
     deleteProduct,
-    mediaFolders,
     createMediaFolder,
     deleteMediaFolder,
     clearMediaFolder,
@@ -36,1739 +86,1552 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     deleteImageFromFolder,
     updateOrderStatus,
     deleteOrder,
-    adminNotes,
-    showToast,
-    serverSynced
+    showToast
   } = useShop();
 
-  // Authentication State
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasAdminSession());
-  const [passkeyInput, setPasskeyInput] = useState('');
-  const [passkeyError, setPasskeyError] = useState(false);
-  const [isVerifyingPasskey, setIsVerifyingPasskey] = useState(false);
+  const [activeTab, setActiveTab] = useState<AdminTab>('products');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isCheckingVerification, setIsCheckingVerification] = useState(false);
+  const [domainCopied, setDomainCopied] = useState(false);
 
-  // Active Tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'customers' | 'products' | 'media'>('overview');
-
-  // Search & Filter States
-  const [orderSearch, setOrderSearch] = useState('');
-  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  // Products Tab State
   const [productSearch, setProductSearch] = useState('');
-  const [productCategoryFilter, setProductCategoryFilter] = useState<string>('all');
-  const [customerSearch, setCustomerSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [inlinePrices, setInlinePrices] = useState<Record<string, string>>({});
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
+  const [confirmDeleteProductId, setConfirmDeleteProductId] = useState<string | null>(null);
+  const [lastSavedBanner, setLastSavedBanner] = useState<{ name: string; image: string } | null>(null);
 
-  // Image Folder Manager States
-  const [selectedMediaFolderId, setSelectedMediaFolderId] = useState<string>('');
-  const [newFolderName, setNewFolderName] = useState('');
-  const [isUploadingMediaBatch, setIsUploadingMediaBatch] = useState(false);
-  const [confirmDeleteFolderId, setConfirmDeleteFolderId] = useState<string | null>(null);
-  const [confirmClearFolderId, setConfirmClearFolderId] = useState<string | null>(null);
-  const [confirmDeleteMediaImageId, setConfirmDeleteMediaImageId] = useState<string | null>(null);
-  const [targetProductIdForMedia, setTargetProductIdForMedia] = useState<string>('');
-  const [pickerFolderId, setPickerFolderId] = useState<string>('all');
-  const [modalNewFolderName, setModalNewFolderName] = useState('');
-
-  useEffect(() => {
-    if (mediaFolders.length > 0 && !mediaFolders.some(f => f.id === selectedMediaFolderId)) {
-      setSelectedMediaFolderId(mediaFolders[0].id);
-    } else if (mediaFolders.length === 0 && selectedMediaFolderId !== '') {
-      setSelectedMediaFolderId('');
-    }
-  }, [mediaFolders, selectedMediaFolderId]);
-
-  useEffect(() => {
-    if (products.length > 0 && !products.some(p => p.id === targetProductIdForMedia)) {
-      setTargetProductIdForMedia(products[0].id);
-    }
-  }, [products, targetProductIdForMedia]);
-
-  // Selected Order for detail & status editing
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [newStatus, setNewStatus] = useState<Order['status']>('Processing');
-  const [newTracking, setNewTracking] = useState('');
-  const [orderNoteInput, setOrderNoteInput] = useState('');
-
-  // Product Editing / Adding State
+  // Product Editor Sub-Modal State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
-  const [productForm, setProductForm] = useState<Partial<Product>>({});
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [previewGalleryIdx, setPreviewGalleryIdx] = useState(0);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [pickerFolderId, setPickerFolderId] = useState<string>('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
 
-  // Inline Delete Confirmation States (iframe-safe replacement for browser confirm())
+  // Image Folders Tab State
+  const [selectedFolderId, setSelectedFolderId] = useState<string>('');
+  const [newFolderName, setNewFolderName] = useState('');
+  const [isUploadingFolder, setIsUploadingFolder] = useState(false);
+  const [targetProductId, setTargetProductId] = useState<string>('');
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'delete-folder' | 'clear-folder' | 'delete-image';
+    folderId: string;
+    imageId?: string;
+  } | null>(null);
+
+  // Orders Tab State
+  const [orderSearch, setOrderSearch] = useState('');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [orderDraftStatus, setOrderDraftStatus] = useState<Order['status']>('Processing');
+  const [orderDraftTracking, setOrderDraftTracking] = useState('');
+  const [orderDraftNote, setOrderDraftNote] = useState('');
   const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
-  const [confirmDeleteProductId, setConfirmDeleteProductId] = useState<string | null>(null);
 
-  // Handle Login (server-verified so passkey is never exposed in client UI/bundle)
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = passkeyInput.trim();
-    if (!trimmed || isVerifyingPasskey) {
-      setPasskeyError(true);
-      return;
+  // Customers Tab State
+  const [customerSearch, setCustomerSearch] = useState('');
+
+  // File Input Refs
+  const primaryUploadRef = useRef<HTMLInputElement | null>(null);
+  const multiGalleryUploadRef = useRef<HTMLInputElement | null>(null);
+  const folderFilesUploadRef = useRef<HTMLInputElement | null>(null);
+  const folderDirUploadRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep selected folder and target product synchronized
+  useEffect(() => {
+    if (mediaFolders.length > 0 && !mediaFolders.some((f) => f.id === selectedFolderId)) {
+      setSelectedFolderId(mediaFolders[0].id);
     }
-
-    setIsVerifyingPasskey(true);
-    try {
-      const res = await fetch('/api/admin/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passkey: trimmed })
-      });
-
-      if (res.ok) {
-        setAdminSessionPasskey(trimmed);
-        setIsAuthenticated(true);
-        setPasskeyError(false);
-        setPasskeyInput('');
-        showToast('Admin Authorized', 'Welcome to Banaya Enterprise Admin Portal', 'success');
-      } else {
-        setPasskeyError(true);
-      }
-    } catch {
-      setPasskeyError(true);
-      showToast('Verification Unavailable', 'Could not reach server to verify administrator access.', 'warning');
-    } finally {
-      setIsVerifyingPasskey(false);
+    if (mediaFolders.length > 0 && !mediaFolders.some((f) => f.id === pickerFolderId)) {
+      setPickerFolderId(mediaFolders[0].id);
     }
-  };
+  }, [mediaFolders, selectedFolderId, pickerFolderId]);
 
-  // Handle Logout
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    clearAdminSession();
-    showToast('Admin Signed Out', 'Secure session ended.', 'info');
-  };
+  useEffect(() => {
+    if (products.length > 0 && !products.some((p) => p.id === targetProductId)) {
+      setTargetProductId(products[0].id);
+    }
+  }, [products, targetProductId]);
 
-  // Quick stats calculations
-  const totalRevenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
-  const totalOrders = orders.length;
-  const pendingOrders = orders.filter(o => o.status === 'Processing' || o.status === 'Confirmed').length;
-  const lowStockProducts = products.filter(p => !p.inStock).length;
+  // Derived Analytics & Filtered Lists
+  const totalRevenue = useMemo(
+    () => orders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0),
+    [orders]
+  );
 
-  // Aggregate Customer Profiles from all orders
-  const customerList = useMemo(() => {
-    const map = new Map<string, {
-      name: string;
-      phone: string;
-      email: string;
-      city: string;
-      ordersCount: number;
-      totalSpent: number;
-      lastOrderDate: string;
-      lastOrderId: string;
-      lastStatus: string;
-    }>();
+  const pendingOrdersCount = useMemo(
+    () => orders.filter((o) => o.status === 'Processing' || o.status === 'Confirmed').length,
+    [orders]
+  );
 
-    orders.forEach(order => {
-      const key = (order.phone || order.email || order.customerName).toLowerCase().trim();
-      const existing = map.get(key);
-      if (existing) {
-        existing.ordersCount += 1;
-        existing.totalSpent += order.totalAmount;
-        if (order.date > existing.lastOrderDate) {
-          existing.lastOrderDate = order.date;
-          existing.lastOrderId = order.id;
-          existing.lastStatus = order.status;
-        }
-      } else {
-        map.set(key, {
-          name: order.customerName,
-          phone: order.phone,
-          email: order.email,
-          city: order.city,
-          ordersCount: 1,
-          totalSpent: order.totalAmount,
-          lastOrderDate: order.date,
-          lastOrderId: order.id,
-          lastStatus: order.status
-        });
-      }
+  const outOfStockCount = useMemo(
+    () => products.filter((p) => !p.inStock).length,
+    [products]
+  );
+
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    return products.filter((p) => {
+      const matchesCat = categoryFilter === 'all' || p.categorySlug === categoryFilter;
+      if (!matchesCat) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.tamilName || '').toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q)
+      );
     });
+  }, [products, productSearch, categoryFilter]);
 
-    return Array.from(map.values());
-  }, [orders]);
-
-  // Filtered Orders
   const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
-      const matchSearch =
-        o.id.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.customerName.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.phone.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.email.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.city.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.trackingNumber.toLowerCase().includes(orderSearch.toLowerCase());
-
-      const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
-      return matchSearch && matchStatus;
+    const q = orderSearch.trim().toLowerCase();
+    return orders.filter((o) => {
+      const matchesStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
+      if (!matchesStatus) return false;
+      if (!q) return true;
+      return (
+        o.id.toLowerCase().includes(q) ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.phone.toLowerCase().includes(q) ||
+        o.city.toLowerCase().includes(q) ||
+        (o.trackingNumber || '').toLowerCase().includes(q)
+      );
     });
   }, [orders, orderSearch, orderStatusFilter]);
 
-  // Filtered Products
-  const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      const matchSearch =
-        p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-        (p.tamilName && p.tamilName.includes(productSearch)) ||
-        p.id.toLowerCase().includes(productSearch.toLowerCase()) ||
-        p.category.toLowerCase().includes(productSearch.toLowerCase());
+  const customers = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        key: string;
+        name: string;
+        phone: string;
+        email: string;
+        city: string;
+        ordersCount: number;
+        totalSpend: number;
+        lastOrderDate: string;
+      }
+    >();
 
-      const matchCategory = productCategoryFilter === 'all' || p.categorySlug === productCategoryFilter;
-      return matchSearch && matchCategory;
-    });
-  }, [products, productSearch, productCategoryFilter]);
-
-  // Filtered Customers
-  const filteredCustomers = useMemo(() => {
-    return customerList.filter(c =>
-      c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.phone.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.email.toLowerCase().includes(customerSearch.toLowerCase()) ||
-      c.city.toLowerCase().includes(customerSearch.toLowerCase())
-    );
-  }, [customerList, customerSearch]);
-
-  // Save Order Updates
-  const handleSaveOrderStatus = () => {
-    if (!selectedOrder) return;
-    updateOrderStatus(selectedOrder.id, newStatus, newTracking || selectedOrder.trackingNumber, orderNoteInput);
-    setSelectedOrder(null);
-  };
-
-  // Quick inline price change state
-  const [quickPrices, setQuickPrices] = useState<Record<string, number>>({});
-  const [lastSavedBanner, setLastSavedBanner] = useState<{ name: string; price: number } | null>(null);
-
-  const handleQuickPriceChange = (prodId: string, val: number) => {
-    setQuickPrices(prev => ({ ...prev, [prodId]: val }));
-  };
-
-  const handleSaveQuickPrice = async (prod: Product) => {
-    const newPrice = quickPrices[prod.id];
-    if (newPrice === undefined || newPrice <= 0) return;
-    const updated: Product = {
-      ...prod,
-      price: newPrice,
-      originalPrice: prod.originalPrice && prod.originalPrice > newPrice ? prod.originalPrice : Math.round(newPrice * 1.25)
-    };
-    const saved = await updateProduct(updated);
-    if (saved) {
-      setLastSavedBanner({ name: updated.name, price: updated.price });
-    }
-    setQuickPrices(prev => {
-      const copy = { ...prev };
-      delete copy[prod.id];
-      return copy;
-    });
-  };
-
-  // Active Preview Image Index for the Live Storefront Preview (Primary = 0, Secondary = 1+)
-  const [activePreviewIdx, setActivePreviewIdx] = useState(0);
-
-  // Upload Primary Front Image (Cover Photo) -> Uploads & persists to server
-  const handleUploadPrimaryImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputEl = e.target;
-    const file = inputEl.files?.[0];
-    if (!file) return;
-
-    if (file.size > 10 * 1024 * 1024) {
-      showToast('File Too Large', 'Please upload an image smaller than 10MB.', 'warning');
-      inputEl.value = '';
-      return;
-    }
-
-    setIsUploadingImage(true);
-    try {
-      const uploadedUrl = await uploadProductImage(file);
-      setProductForm(prev => {
-        const prevGallery = prev.gallery && prev.gallery.length > 0 ? [...prev.gallery] : [uploadedUrl];
-        prevGallery[0] = uploadedUrl;
-        return {
-          ...prev,
-          image: uploadedUrl,
-          gallery: prevGallery
-        };
-      });
-      setActivePreviewIdx(0);
-      showToast('Primary Front Image Uploaded', 'Image saved & ready. Click Save & Update Live Product to publish.', 'success', uploadedUrl);
-    } catch (err) {
-      if (err instanceof AdminAuthError) {
-        clearAdminSession();
-        setIsAuthenticated(false);
-        showToast('Admin Verification Required', err.message, 'warning');
+    for (const ord of orders) {
+      const key = (ord.phone || ord.email || ord.customerName).trim().toLowerCase();
+      const existing = map.get(key);
+      if (existing) {
+        existing.ordersCount += 1;
+        existing.totalSpend += Number(ord.totalAmount) || 0;
+        if (ord.date > existing.lastOrderDate) existing.lastOrderDate = ord.date;
       } else {
-        showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
+        map.set(key, {
+          key,
+          name: ord.customerName,
+          phone: ord.phone,
+          email: ord.email || '',
+          city: ord.city,
+          ordersCount: 1,
+          totalSpend: Number(ord.totalAmount) || 0,
+          lastOrderDate: ord.date
+        });
       }
-    } finally {
-      inputEl.value = '';
-      setIsUploadingImage(false);
-    }
-  };
-
-  // Upload Secondary Image (Side Phase, Back Packaging, Nutritional Label, Texture)
-  const handleUploadSecondaryImage = async (slotIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputEl = e.target;
-    const file = inputEl.files?.[0];
-    if (!file) return;
-
-    if (file.size > 10 * 1024 * 1024) {
-      showToast('File Too Large', 'Please upload an image smaller than 10MB.', 'warning');
-      inputEl.value = '';
-      return;
     }
 
-    setIsUploadingImage(true);
-    try {
-      const uploadedUrl = await uploadProductImage(file);
-      setProductForm(prev => {
-        const currentPrimary = prev.image || prev.gallery?.[0] || '/images/banaya_honey.jpg';
-        const prevGallery = [...(prev.gallery && prev.gallery.length > 0 ? prev.gallery : [currentPrimary])];
-        const targetIndex = slotIndex + 1;
+    const q = customerSearch.trim().toLowerCase();
+    return Array.from(map.values())
+      .filter((c) => {
+        if (!q) return true;
+        return (
+          c.name.toLowerCase().includes(q) ||
+          c.phone.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q) ||
+          c.city.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => b.totalSpend - a.totalSpend);
+  }, [orders, customerSearch]);
 
-        if (targetIndex < prevGallery.length) {
-          prevGallery[targetIndex] = uploadedUrl;
-        } else {
-          prevGallery.push(uploadedUrl);
-        }
-
-        return {
-          ...prev,
-          gallery: prevGallery
-        };
-      });
-      setActivePreviewIdx(slotIndex + 1);
-      showToast(`Secondary Image #${slotIndex + 1} Uploaded`, 'Side phase photo uploaded. Save product to publish live.', 'success', uploadedUrl);
-    } catch (err) {
-      if (err instanceof AdminAuthError) {
-        clearAdminSession();
-        setIsAuthenticated(false);
-        showToast('Admin Verification Required', err.message, 'warning');
-      } else {
-        showToast('Upload Failed', 'Could not process image file. Please try another photo.', 'warning');
-      }
-    } finally {
-      inputEl.value = '';
-      setIsUploadingImage(false);
-    }
-  };
-
-  // Add New Secondary Image Slot (Side Phase or Angle)
-  const handleAddSecondarySlot = (imagePath?: string) => {
-    const pathToAdd = imagePath || '/images/natural_honey_jar.jpg';
-    setProductForm(prev => {
-      const currentPrimary = prev.image || prev.gallery?.[0] || '/images/banaya_honey.jpg';
-      const prevGallery = [...(prev.gallery && prev.gallery.length > 0 ? prev.gallery : [currentPrimary])];
-      prevGallery.push(pathToAdd);
-      return {
-        ...prev,
-        gallery: prevGallery
-      };
-    });
-    showToast('Secondary Slot Added', 'Upload a photo or choose a preset for this angle.', 'info');
-  };
-
-  // Remove a Secondary Image Slot
-  const handleRemoveSecondaryImage = (slotIndex: number) => {
-    setProductForm(prev => {
-      const currentPrimary = prev.image || prev.gallery?.[0] || '/images/banaya_honey.jpg';
-      const prevGallery = [...(prev.gallery && prev.gallery.length > 0 ? prev.gallery : [currentPrimary])];
-      const targetIndex = slotIndex + 1;
-      if (targetIndex < prevGallery.length) {
-        prevGallery.splice(targetIndex, 1);
-      }
-      return {
-        ...prev,
-        gallery: prevGallery
-      };
-    });
-    setActivePreviewIdx(0);
-    showToast('Image Removed', 'Secondary angle removed from gallery.', 'info');
-  };
-
-  // Promote a Secondary Image to Primary (Make it the Front View)
-  const handlePromoteToPrimary = (slotIndex: number) => {
-    setProductForm(prev => {
-      const currentPrimary = prev.image || prev.gallery?.[0] || '/images/banaya_honey.jpg';
-      const prevGallery = [...(prev.gallery && prev.gallery.length > 0 ? prev.gallery : [currentPrimary])];
-      const targetIndex = slotIndex + 1;
-      const promoted = prevGallery.splice(targetIndex, 1)[0];
-      if (promoted) {
-        prevGallery.unshift(promoted);
-      }
-      return {
-        ...prev,
-        image: promoted || prevGallery[0],
-        gallery: prevGallery
-      };
-    });
-    setActivePreviewIdx(0);
-    showToast('Swapped to Primary Front View', 'Selected photo is now the main storefront cover.', 'success');
-  };
-
-  // Image Folder Helpers
-  const activeMediaFolder = useMemo(
-    () => mediaFolders.find(f => f.id === selectedMediaFolderId) || mediaFolders[0] || null,
-    [mediaFolders, selectedMediaFolderId]
+  const selectedFolder = useMemo(
+    () => mediaFolders.find((f) => f.id === selectedFolderId) || mediaFolders[0] || null,
+    [mediaFolders, selectedFolderId]
   );
 
-  const handleCreateMediaFolder = async (nameToCreate?: string) => {
-    const raw = (nameToCreate ?? newFolderName).trim();
-    if (!raw) {
-      showToast('Folder Name Required', 'Please enter a name for the new image folder.', 'warning');
-      return;
-    }
-    const created = await createMediaFolder(raw);
-    if (created) {
-      setSelectedMediaFolderId(created.id);
-      if (nameToCreate === undefined) {
-        setNewFolderName('');
-      }
-    }
-  };
+  const pickerFolder = useMemo(
+    () => mediaFolders.find((f) => f.id === pickerFolderId) || mediaFolders[0] || null,
+    [mediaFolders, pickerFolderId]
+  );
 
-  const handleUploadWholeDirectory = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputEl = e.target;
-    const files = inputEl.files ? Array.from<File>(inputEl.files) : [];
-    if (files.length === 0) return;
+  const editingGallery = useMemo(() => {
+    if (!editingProduct) return [];
+    const primary = editingProduct.image?.trim() || '';
+    const rest = (editingProduct.gallery || []).filter((g) => g && g.trim() && g !== primary);
+    return primary ? [primary, ...rest] : rest;
+  }, [editingProduct]);
 
-    setIsUploadingMediaBatch(true);
+  const galleryBytes = useMemo(
+    () => calculateGalleryByteSize(editingGallery),
+    [editingGallery]
+  );
+
+  if (!isOpen) return null;
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSigningIn(true);
     try {
-      const createdOrUpdated = await uploadLocalDirectoryAsFolder(files);
-      if (createdOrUpdated) {
-        setSelectedMediaFolderId(createdOrUpdated.id);
-      }
+      await signInWithEmailAdmin(loginEmail, loginPassword);
     } finally {
-      inputEl.value = '';
-      setIsUploadingMediaBatch(false);
+      setIsSigningIn(false);
     }
   };
 
-  const handleAddFilesToFolder = async (folderId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputEl = e.target;
-    const files = inputEl.files ? Array.from<File>(inputEl.files) : [];
-    if (files.length === 0 || !folderId) return;
-
-    setIsUploadingMediaBatch(true);
+  const handleFirstTimeRegister = async () => {
+    setIsSigningIn(true);
     try {
-      await addImagesToFolder(folderId, files);
+      await registerFirstAdminAccount(loginEmail, loginPassword);
     } finally {
-      inputEl.value = '';
-      setIsUploadingMediaBatch(false);
+      setIsSigningIn(false);
     }
   };
 
-  const handleApplyImageToTargetProduct = async (imageUrl: string, mode: 'primary' | 'gallery') => {
-    const targetProd = products.find(p => p.id === targetProductIdForMedia) || products[0];
-    if (!targetProd) return;
-
-    const existingGallery = Array.isArray(targetProd.gallery) && targetProd.gallery.length > 0
-      ? [...targetProd.gallery]
-      : [targetProd.image];
-
-    const updatedGallery =
-      mode === 'primary'
-        ? [imageUrl, ...existingGallery.filter(u => u !== imageUrl)]
-        : [...existingGallery.filter(u => u !== imageUrl), imageUrl];
-
-    const updatedProduct: Product = {
-      ...targetProd,
-      image: mode === 'primary' ? imageUrl : targetProd.image,
-      gallery: updatedGallery
-    };
-
-    await updateProduct(updatedProduct);
-  };
-
-  const handleApplyWholeFolderToTargetProduct = async () => {
-    if (!activeMediaFolder || activeMediaFolder.images.length === 0) {
-      showToast('Empty Folder', 'Add at least 1 photo to this folder before applying.', 'warning');
-      return;
-    }
-    const targetProd = products.find(p => p.id === targetProductIdForMedia) || products[0];
-    if (!targetProd) return;
-
-    const urls = activeMediaFolder.images.map(img => img.url);
-    await updateProduct({
-      ...targetProd,
-      image: urls[0],
-      gallery: urls
-    });
-  };
-
-  const handleUploadFolderToProductForm = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputEl = e.target;
-    const files = inputEl.files ? Array.from<File>(inputEl.files) : [];
-    if (files.length === 0) return;
-
-    const imageFiles = files.filter(file => {
-      if (file.type && file.type.startsWith('image/')) return true;
-      return /\.(png|jpe?g|webp|gif|jfif|bmp|avif)$/i.test(file.name);
-    });
-
-    if (imageFiles.length === 0) {
-      showToast('No Images Found', 'The selected folder has no supported image files.', 'warning');
-      inputEl.value = '';
-      return;
-    }
-
-    setIsUploadingImage(true);
+  const handleRefreshVerification = async () => {
+    setIsCheckingVerification(true);
     try {
-      const firstRel = (imageFiles[0] as File & { webkitRelativePath?: string }).webkitRelativePath || '';
-      const folderName = firstRel.includes('/')
-        ? firstRel.split('/')[0].trim()
-        : `${productForm.name?.trim() || 'Product'} Photos`;
-
-      const targetFolder = await createMediaFolder(folderName);
-      if (!targetFolder) return;
-
-      const added = await addImagesToFolder(targetFolder.id, imageFiles);
-      if (added.length > 0) {
-        const urls = added.map(item => item.url);
-        setProductForm(prev => ({
-          ...prev,
-          image: urls[0],
-          gallery: urls
-        }));
-        setPickerFolderId(targetFolder.id);
-        setActivePreviewIdx(0);
-      } else if (!hasAdminSession()) {
-        setIsAuthenticated(false);
-      }
+      await refreshAdminVerificationStatus();
     } finally {
-      inputEl.value = '';
-      setIsUploadingImage(false);
+      setIsCheckingVerification(false);
     }
   };
 
-  // Start Editing a Product
-  const handleStartEditProduct = (prod: Product) => {
-    setEditingProduct(prod);
-    setIsCreatingNewProduct(false);
-    setActivePreviewIdx(0);
-    const initialGallery = prod.gallery && prod.gallery.length > 0 ? [...prod.gallery] : [prod.image];
-    // Ensure primary image is at gallery[0]
-    if (initialGallery[0] !== prod.image) {
-      initialGallery.unshift(prod.image);
+  const handleGoogleSignIn = async () => {
+    setIsSigningIn(true);
+    try {
+      await signInWithGoogleAdmin();
+    } finally {
+      setIsSigningIn(false);
     }
-    setProductForm({ 
+  };
+
+  const handleCopyDomain = async () => {
+    if (!unauthorizedDomain) return;
+    try {
+      await navigator.clipboard.writeText(unauthorizedDomain);
+      setDomainCopied(true);
+      setTimeout(() => setDomainCopied(false), 2500);
+    } catch {
+      showToast('Copy Domain', `Copy this hostname manually: ${unauthorizedDomain}`, 'info');
+    }
+  };
+
+  const handleViewLiveStore = () => {
+    onClose();
+    setTimeout(() => {
+      document.getElementById('shop-products')?.scrollIntoView({ behavior: 'smooth' });
+    }, 120);
+  };
+
+  const openEditProductModal = (prod: Product) => {
+    const normalizedGallery = Array.from(
+      new Set([prod.image, ...(prod.gallery || [])].filter(Boolean))
+    );
+    setEditingProduct({
       ...prod,
-      image: prod.image,
-      gallery: initialGallery,
-      weightOptions: prod.weightOptions || ['100g', '250g', '500g']
+      gallery: normalizedGallery.length > 0 ? normalizedGallery : [prod.image]
     });
+    setIsAddingProduct(false);
+    setPreviewGalleryIdx(0);
+    setShowFolderPicker(false);
   };
 
-  // Start Adding a New Product
-  const handleStartNewProduct = () => {
-    setIsCreatingNewProduct(true);
-    setEditingProduct(null);
-    setActivePreviewIdx(0);
-    setProductForm({
-      id: `banaya-prod-${Date.now().toString().slice(-4)}`,
+  const openAddProductModal = () => {
+    const defaultCat = CATEGORIES[0];
+    const newProd: Product = {
+      id: `banaya-${Date.now().toString(36)}`,
       name: '',
       tamilName: '',
-      tagline: '100% Pure Natural Herb & Wellness Formulation',
-      category: 'Traditional Wellness',
-      categorySlug: 'traditional-wellness',
-      price: 250,
-      originalPrice: 320,
+      tagline: '100% Pure & Natural Traditional Harvest',
+      category: defaultCat.name,
+      categorySlug: defaultCat.slug,
+      price: 299,
+      originalPrice: 399,
       rating: 4.9,
       reviewsCount: 15,
       inStock: true,
-      weightOptions: ['100g', '250g', '500g'],
+      weightOptions: ['250g', '500g', '1kg'],
       defaultWeight: '500g',
-      badges: ['100% Pure', 'Small Batch'],
+      badges: ['100% Pure', 'Traditional'],
       image: '/images/pure-honey-1.png',
-      gallery: [
-        '/images/pure-honey-1.png',
-        '/images/pure-honey-2.png',
-        '/images/pure-honey-3.png'
-      ],
-      description: 'Handcrafted fresh natural formulation prepared using authentic traditional methods from Banaya Enterprise.',
-      ingredients: ['100% Pure Native Botanical Ingredients'],
-      keyBenefits: ['Supports natural immunity', 'Zero chemical additives or synthetic preservatives'],
-      howToUse: 'Consume 1-2 teaspoons daily with warm milk or water.',
-      origin: 'Banaya Enterprise, Tamil Nadu',
-      isBestSeller: true,
+      gallery: ['/images/pure-honey-1.png'],
+      description: 'Harvested and packed in small batches to preserve natural aroma and potency.',
+      ingredients: ['100% Natural Ingredients'],
+      keyBenefits: ['Rich in natural antioxidants', 'Zero preservatives or added sugar'],
+      howToUse: 'Use daily as part of a balanced traditional wellness routine.',
+      storageInfo: 'Store in a cool, dry place away from direct sunlight.',
+      origin: 'Tamil Nadu, India',
+      isBestSeller: false,
       isNew: true
-    });
+    };
+    setEditingProduct(newProd);
+    setIsAddingProduct(true);
+    setPreviewGalleryIdx(0);
+    setShowFolderPicker(false);
   };
 
-  // Save Product (Edit or Create)
-  const handleSaveProduct = async (e: React.FormEvent) => {
+  const handlePrimaryPhotoUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !editingProduct) return;
+    setIsUploadingImage(true);
+    try {
+      const optimizedUrl = await uploadProductImage(files[0]);
+      setEditingProduct((prev) => {
+        if (!prev) return prev;
+        const others = (prev.gallery || []).filter((g) => g && g !== prev.image && g !== optimizedUrl);
+        return {
+          ...prev,
+          image: optimizedUrl,
+          gallery: [optimizedUrl, ...others]
+        };
+      });
+      setPreviewGalleryIdx(0);
+      showToast('Main Photo Ready', 'Click "Update Live Website" below to publish this photo live.', 'info', optimizedUrl);
+    } catch (err) {
+      showToast('Upload Error', (err as Error)?.message || 'Failed to read selected photo.', 'warning');
+    } finally {
+      setIsUploadingImage(false);
+      if (primaryUploadRef.current) primaryUploadRef.current.value = '';
+    }
+  };
+
+  const handleMultipleGalleryUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !editingProduct) return;
+    setIsUploadingImage(true);
+    try {
+      const fileArray = Array.from(files);
+      const uploadedUrls: string[] = [];
+      for (const file of fileArray) {
+        try {
+          const url = await uploadProductImage(file);
+          uploadedUrls.push(url);
+        } catch {
+          // skip unreadable individual image
+        }
+      }
+      if (uploadedUrls.length > 0) {
+        setEditingProduct((prev) => {
+          if (!prev) return prev;
+          const existing = Array.from(new Set([prev.image, ...(prev.gallery || [])].filter(Boolean)));
+          const merged = Array.from(new Set([...existing, ...uploadedUrls])).slice(0, 8);
+          return {
+            ...prev,
+            image: merged[0] || uploadedUrls[0],
+            gallery: merged
+          };
+        });
+        showToast(
+          `${uploadedUrls.length} ${uploadedUrls.length === 1 ? 'Photo' : 'Photos'} Added`,
+          'Click "Update Live Website" to publish these photos to customers.',
+          'info',
+          uploadedUrls[0]
+        );
+      }
+    } finally {
+      setIsUploadingImage(false);
+      if (multiGalleryUploadRef.current) multiGalleryUploadRef.current.value = '';
+    }
+  };
+
+  const handleSetMainGalleryPhoto = (url: string) => {
+    if (!editingProduct) return;
+    const reordered = [url, ...editingGallery.filter((g) => g !== url)];
+    setEditingProduct({
+      ...editingProduct,
+      image: url,
+      gallery: reordered
+    });
+    setPreviewGalleryIdx(0);
+  };
+
+  const handleMoveGalleryPhoto = (index: number, direction: -1 | 1) => {
+    if (!editingProduct) return;
+    const target = index + direction;
+    if (target < 0 || target >= editingGallery.length) return;
+    const copy = [...editingGallery];
+    const [moved] = copy.splice(index, 1);
+    copy.splice(target, 0, moved);
+    setEditingProduct({
+      ...editingProduct,
+      image: copy[0] || editingProduct.image,
+      gallery: copy
+    });
+    setPreviewGalleryIdx(target);
+  };
+
+  const handleRemoveGalleryPhoto = (url: string) => {
+    if (!editingProduct) return;
+    if (editingGallery.length <= 1) {
+      showToast('Photo Required', 'Every product requires at least 1 main photo.', 'warning');
+      return;
+    }
+    const next = editingGallery.filter((g) => g !== url);
+    setEditingProduct({
+      ...editingProduct,
+      image: next[0],
+      gallery: next
+    });
+    setPreviewGalleryIdx(0);
+  };
+
+  const handlePickFolderPhoto = (url: string, asMain: boolean) => {
+    if (!editingProduct) return;
+    if (asMain) {
+      const merged = [url, ...editingGallery.filter((g) => g !== url)].slice(0, 8);
+      setEditingProduct({
+        ...editingProduct,
+        image: url,
+        gallery: merged
+      });
+      setPreviewGalleryIdx(0);
+    } else {
+      const merged = Array.from(new Set([...editingGallery, url])).slice(0, 8);
+      setEditingProduct({
+        ...editingProduct,
+        gallery: merged
+      });
+      setPreviewGalleryIdx(Math.max(0, merged.indexOf(url)));
+    }
+  };
+
+  const handleSaveProductModal = async (e: React.FormEvent) => {
     e.preventDefault();
-    const numericPrice = Number(productForm.price);
-    if (!productForm.name?.trim() || !Number.isFinite(numericPrice) || numericPrice <= 0) {
-      showToast('Validation Error', 'Please enter a valid Product Name and Customer Price (₹ > 0).', 'warning');
+    if (!editingProduct) return;
+    if (!editingProduct.name.trim()) {
+      showToast('Name Required', 'Please enter a product name before publishing.', 'warning');
+      return;
+    }
+    if (galleryBytes > MAX_PRODUCT_GALLERY_BYTES) {
+      showToast(
+        'Gallery Too Large',
+        'Please remove 1 or 2 photos so the gallery stays fast for mobile shoppers.',
+        'warning'
+      );
       return;
     }
 
-    const parseList = (val: any): string[] => {
-      if (!val) return [];
-      if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
-      if (typeof val === 'string') {
-        return val.split(',').map(s => s.trim()).filter(Boolean);
-      }
-      return [String(val)];
-    };
-
-    const parsedWeights = parseList(productForm.weightOptions);
-    const finalWeights = parsedWeights.length > 0 ? parsedWeights : ['100g', '250g', '500g'];
-    const trimmedDefaultWeight = productForm.defaultWeight?.trim() || '';
-    const finalDefaultWeight =
-      trimmedDefaultWeight && finalWeights.includes(trimmedDefaultWeight)
-        ? trimmedDefaultWeight
-        : trimmedDefaultWeight
-          ? trimmedDefaultWeight
-          : finalWeights[0];
-    const normalizedWeights = finalWeights.includes(finalDefaultWeight)
-      ? finalWeights
-      : [finalDefaultWeight, ...finalWeights];
-
-    const rawGallery = Array.isArray(productForm.gallery)
-      ? productForm.gallery.map(g => String(g).trim()).filter(Boolean)
-      : [];
-    const primaryImg = (productForm.image || '').trim() || rawGallery[0] || '/images/banaya_honey.jpg';
-    const finalGallery = Array.from(new Set([primaryImg, ...rawGallery]));
-
-    const numericMrp = Number(productForm.originalPrice);
-    const finalMrp = Number.isFinite(numericMrp) && numericMrp > 0
-      ? numericMrp
-      : Math.round(numericPrice * 1.25);
-
-    const compiledProduct: Product = {
-      id: productForm.id || `banaya-${Date.now().toString().slice(-4)}`,
-      name: productForm.name.trim(),
-      tamilName: productForm.tamilName?.trim() || '',
-      tagline: productForm.tagline?.trim() || '100% Pure Natural Herb & Wellness',
-      category: productForm.category || 'Traditional Wellness',
-      categorySlug: productForm.categorySlug || 'traditional-wellness',
-      price: numericPrice,
-      originalPrice: finalMrp,
-      rating: Number(productForm.rating) || 4.9,
-      reviewsCount: Number(productForm.reviewsCount) || 12,
-      inStock: productForm.inStock !== false,
-      weightOptions: normalizedWeights,
-      defaultWeight: finalDefaultWeight,
-      badges: parseList(productForm.badges).length > 0 ? parseList(productForm.badges) : ['100% Pure'],
-      image: primaryImg,
-      gallery: finalGallery,
-      description: productForm.description || '',
-      ingredients: parseList(productForm.ingredients).length > 0 ? parseList(productForm.ingredients) : ['100% Pure Native Botanical Ingredients'],
-      keyBenefits: parseList(productForm.keyBenefits).length > 0 ? parseList(productForm.keyBenefits) : ['Supports natural vitality and immune defense'],
-      howToUse: productForm.howToUse || 'Consume 1 teaspoon daily with warm water or milk.',
-      origin: productForm.origin || 'Banaya Enterprise, Tamil Nadu',
-      isBestSeller: !!productForm.isBestSeller,
-      isNew: !!productForm.isNew
+    const cleanGallery = editingGallery.length > 0 ? editingGallery : [editingProduct.image];
+    const cleanWeights = editingProduct.weightOptions.filter(Boolean);
+    const payload: Product = {
+      ...editingProduct,
+      image: cleanGallery[0],
+      gallery: cleanGallery,
+      weightOptions: cleanWeights.length > 0 ? cleanWeights : ['500g'],
+      defaultWeight: editingProduct.defaultWeight || cleanWeights[0] || '500g',
+      price: Math.max(1, Number(editingProduct.price) || 1),
+      originalPrice: Math.max(1, Number(editingProduct.originalPrice) || Number(editingProduct.price) || 1)
     };
 
     setIsSavingProduct(true);
     try {
-      const saved = isCreatingNewProduct
-        ? await addProduct(compiledProduct)
-        : await updateProduct(compiledProduct);
-      if (saved) {
-        setLastSavedBanner({ name: compiledProduct.name, price: compiledProduct.price });
+      const ok = isAddingProduct ? await addProduct(payload) : await updateProduct(payload);
+      if (ok) {
+        setLastSavedBanner({ name: payload.name, image: payload.image });
         setEditingProduct(null);
-        setIsCreatingNewProduct(false);
-        setProductForm({});
-      } else if (!hasAdminSession()) {
-        setIsAuthenticated(false);
+        setIsAddingProduct(false);
       }
     } finally {
       setIsSavingProduct(false);
     }
   };
 
-  // Format currency
-  const formatINR = (val: number) => `₹${val.toLocaleString('en-IN')}`;
+  const handleInlinePriceUpdate = async (prod: Product) => {
+    const raw = inlinePrices[prod.id];
+    const parsed = Number(raw);
+    if (!raw || Number.isNaN(parsed) || parsed <= 0 || parsed === prod.price) return;
+    setSavingRowId(prod.id);
+    try {
+      const ok = await updateProduct({ ...prod, price: Math.round(parsed) });
+      if (ok) {
+        setLastSavedBanner({ name: prod.name, image: prod.image });
+        setInlinePrices((prev) => {
+          const copy = { ...prev };
+          delete copy[prod.id];
+          return copy;
+        });
+      }
+    } finally {
+      setSavingRowId(null);
+    }
+  };
 
-  if (!isOpen) return null;
+  const handleToggleStock = async (prod: Product) => {
+    setSavingRowId(prod.id);
+    try {
+      await updateProduct({ ...prod, inStock: !prod.inStock });
+    } finally {
+      setSavingRowId(null);
+    }
+  };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 text-slate-900 animate-fadeIn">
-      <div 
-        className="bg-white rounded-3xl w-full max-w-7xl max-h-[94vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden relative"
-        onClick={(e) => e.stopPropagation()}
-      >
-        
-        {/* Top Header Bar */}
-        <div className="bg-[#064E3B] text-white px-6 py-4 flex items-center justify-between border-b border-emerald-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white p-0.5 shadow-sm flex items-center justify-center shrink-0">
+  const handleCreateFolderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    const created = await createMediaFolder(newFolderName.trim());
+    if (created) {
+      setSelectedFolderId(created.id);
+      setNewFolderName('');
+    }
+  };
+
+  const handleApplyFolderPhotoToProduct = async (url: string, mode: 'main' | 'gallery') => {
+    const target = products.find((p) => p.id === targetProductId);
+    if (!target) return;
+    const nextGallery =
+      mode === 'main'
+        ? [url, ...target.gallery.filter((g) => g !== url)].slice(0, 8)
+        : Array.from(new Set([...target.gallery, url])).slice(0, 8);
+    const updated: Product = {
+      ...target,
+      image: mode === 'main' ? url : target.image,
+      gallery: nextGallery
+    };
+    const ok = await updateProduct(updated);
+    if (ok) {
+      setLastSavedBanner({ name: target.name, image: updated.image });
+    }
+  };
+
+  const openOrderEditor = (ord: Order) => {
+    setEditingOrder(ord);
+    setOrderDraftStatus(ord.status);
+    setOrderDraftTracking(ord.trackingNumber || '');
+    setOrderDraftNote(adminNotes?.[ord.id] || '');
+  };
+
+  const handleSaveOrder = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOrder) return;
+    updateOrderStatus(editingOrder.id, orderDraftStatus, orderDraftTracking, orderDraftNote);
+    setEditingOrder(null);
+  };
+
+  // ==================== LOGIN SCREEN ====================
+  if (!isCloudAdmin) {
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+        <div className="relative w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden my-auto">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close admin portal"
+            className="absolute top-3.5 right-3.5 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="p-6 sm:p-8 space-y-5">
+            <div className="flex items-center gap-3">
               <img
                 src="/images/banaya_logo.png"
                 alt="Banaya Enterprises"
-                className="w-full h-full object-contain rounded-full"
+                className="w-11 h-11 rounded-lg object-contain border border-slate-200 bg-slate-50 p-1"
               />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-heading text-lg sm:text-xl font-bold tracking-tight text-white">
-                  Banaya Enterprises Control Panel
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 leading-tight">
+                  Banaya Admin Portal
                 </h2>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-700/80 text-emerald-200 border border-emerald-600">
-                  ADMIN ONLY
-                </span>
+                <p className="text-xs text-slate-500">
+                  Authorized administrator sign-in required
+                </p>
               </div>
-              <p className="text-xs text-emerald-200/80">
-                Authorized Management for Customer Orders, Products & Store Analytics
-              </p>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            {isAuthenticated && (
-              <span
-                className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                  serverSynced
-                    ? 'bg-emerald-800/80 text-emerald-100 border-emerald-500/60'
-                    : 'bg-amber-900/60 text-amber-200 border-amber-500/50'
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${serverSynced ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                <span>{serverSynced ? 'Live Store Sync Active' : 'Local Mode'}</span>
-              </span>
-            )}
-            {isAuthenticated && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  setTimeout(() => {
-                    document.getElementById('shop-products')?.scrollIntoView({ behavior: 'smooth' });
-                  }, 120);
-                }}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-xs font-bold text-slate-950 transition-colors cursor-pointer shadow-xs"
-                title="Jump to Live Website Product Catalog"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>View Live Website</span>
-              </button>
-            )}
-            {isAuthenticated && (
-              <button
-                onClick={handleLogout}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/60 hover:bg-emerald-900 text-xs font-semibold text-emerald-200 border border-emerald-700 transition-colors cursor-pointer"
-                title="Log out of Admin session"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="w-9 h-9 rounded-full bg-emerald-900/60 hover:bg-emerald-900 text-emerald-200 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-              title="Close Admin Panel"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Not Authenticated: Secure Gatekeeper Screen */}
-        {!isAuthenticated ? (
-          <div className="p-8 sm:p-12 md:p-16 flex flex-col items-center justify-center flex-1 max-w-md mx-auto text-center">
-            <div className="w-20 h-20 rounded-full bg-white p-1 shadow-lg ring-4 ring-emerald-100 flex items-center justify-center mb-5">
-              <img
-                src="/images/banaya_logo.png"
-                alt="Banaya Enterprises Logo"
-                className="w-full h-full object-contain rounded-full"
-              />
-            </div>
-            <h3 className="font-heading text-2xl font-bold text-slate-950 mb-2">
-              Admin Access Verification
-            </h3>
-            <p className="text-xs sm:text-sm text-slate-500 mb-6 leading-relaxed">
-              This portal is restricted exclusively to store managers and staff to view customer purchases, update live inventory, and modify prices.
-            </p>
-
-            <form onSubmit={handleLogin} className="w-full space-y-4">
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter Admin Passkey"
-                  value={passkeyInput}
-                  onChange={(e) => {
-                    setPasskeyInput(e.target.value);
-                    if (passkeyError) setPasskeyError(false);
-                  }}
-                  className={`w-full px-4 py-3 pr-12 text-sm rounded-xl border ${
-                    passkeyError ? 'border-rose-400 bg-rose-50/50' : 'border-slate-300 focus:border-[#064E3B]'
-                  } focus:outline-none focus:ring-2 focus:ring-[#064E3B]/20 transition-all`}
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-
-              {passkeyError && (
-                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2 text-left">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                  <span>Invalid passkey. Access is restricted to authorized administrators only.</span>
+            <div className="border-t border-slate-200 pt-5 space-y-4">
+              {firebaseUser && !isCloudAdmin && !pendingVerificationEmail && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-900 space-y-1.5">
+                  <p className="font-medium">
+                    Signed in as {firebaseUser.email || 'unauthorized account'}
+                  </p>
+                  <p className="text-amber-800">
+                    Authorized store admins:{' '}
+                    <span className="font-mono font-medium">{ADMIN_EMAILS.join(', ')}</span>
+                  </p>
                 </div>
               )}
 
-              <button
-                type="submit"
-                disabled={isVerifyingPasskey}
-                className="w-full py-3 bg-[#064E3B] hover:bg-[#047857] disabled:opacity-60 text-white font-bold text-sm rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <Lock className="w-4 h-4 text-amber-300" />
-                <span>{isVerifyingPasskey ? 'Verifying Access...' : 'Unlock Admin Portal'}</span>
-              </button>
-            </form>
-
-            <div className="mt-8 pt-6 border-t border-slate-100 w-full text-center">
-              <p className="text-[11px] text-slate-400">
-                Protected Administrator Portal • Banaya Enterprises
-              </p>
-            </div>
-          </div>
-        ) : (
-          /* Authenticated: Complete Professional Admin Workspace */
-          <div className="flex-1 flex flex-col min-h-0">
-            
-            {/* Navigation Tabs Bar */}
-            <div className="bg-slate-50 border-b border-slate-200 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between shrink-0 gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => setActiveTab('overview')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'overview'
-                      ? 'bg-[#064E3B] text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <LayoutDashboard className="w-3.5 h-3.5" />
-                  <span>Overview</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('orders')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 relative ${
-                    activeTab === 'orders'
-                      ? 'bg-[#064E3B] text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <ShoppingBag className="w-3.5 h-3.5" />
-                  <span>Orders</span>
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    activeTab === 'orders' ? 'bg-amber-400 text-slate-950' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {orders.length}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('customers')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'customers'
-                      ? 'bg-[#064E3B] text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>Customers</span>
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    activeTab === 'customers' ? 'bg-amber-400 text-slate-950' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {customerList.length}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('products')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'products'
-                      ? 'bg-[#064E3B] text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <Package className="w-3.5 h-3.5" />
-                  <span>Products & Rates</span>
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    activeTab === 'products' ? 'bg-amber-400 text-slate-950' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {products.length}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('media')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                    activeTab === 'media'
-                      ? 'bg-[#064E3B] text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-200/60'
-                  }`}
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Image Folders</span>
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                    activeTab === 'media' ? 'bg-amber-400 text-slate-950' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {mediaFolders.length}
-                  </span>
-                </button>
-              </div>
-
-              {activeTab === 'products' && (
-                <button
-                  onClick={handleStartNewProduct}
-                  className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add New Product</span>
-                </button>
-              )}
-
-              {activeTab === 'media' && (
-                <label className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors">
-                  <FolderOpen className="w-3.5 h-3.5 text-amber-300" />
-                  <span>{isUploadingMediaBatch ? 'Uploading Folder...' : 'Upload Folder from Device'}</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    disabled={isUploadingMediaBatch}
-                    onChange={handleUploadWholeDirectory}
-                    className="hidden"
-                    {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
-                  />
-                </label>
-              )}
-            </div>
-
-            {/* Main Tab Content Panels */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 bg-slate-50/50">
-
-              {/* ---------------- 1. OVERVIEW TAB ---------------- */}
-              {activeTab === 'overview' && (
-                <div className="space-y-6">
-                  {/* Top KPI Metric Cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400 mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider">Total Sales</span>
-                        <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                          <DollarSign className="w-4 h-4" />
-                        </div>
-                      </div>
-                      <div className="font-heading text-2xl font-extrabold text-slate-900">
-                        {formatINR(totalRevenue)}
-                      </div>
-                      <p className="text-[11px] text-emerald-700 font-semibold mt-1 flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" />
-                        <span>Live across {totalOrders} customer orders</span>
-                      </p>
-                    </div>
-
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400 mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider">Total Orders</span>
-                        <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
-                          <ShoppingBag className="w-4 h-4" />
-                        </div>
-                      </div>
-                      <div className="font-heading text-2xl font-extrabold text-slate-900">
-                        {totalOrders}
-                      </div>
-                      <p className="text-[11px] text-slate-500 font-medium mt-1">
-                        {pendingOrders} awaiting fulfillment
-                      </p>
-                    </div>
-
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400 mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider">Active Customers</span>
-                        <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
-                          <Users className="w-4 h-4" />
-                        </div>
-                      </div>
-                      <div className="font-heading text-2xl font-extrabold text-slate-900">
-                        {customerList.length}
-                      </div>
-                      <p className="text-[11px] text-amber-700 font-medium mt-1">
-                        100% verified Tamil Nadu clientele
-                      </p>
-                    </div>
-
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400 mb-2">
-                        <span className="text-xs font-bold uppercase tracking-wider">Catalog Items</span>
-                        <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center">
-                          <Package className="w-4 h-4" />
-                        </div>
-                      </div>
-                      <div className="font-heading text-2xl font-extrabold text-slate-900">
-                        {products.length}
-                      </div>
-                      <p className="text-[11px] text-slate-500 font-medium mt-1">
-                        {lowStockProducts > 0 ? `${lowStockProducts} item out of stock` : 'All items in stock'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Recent Orders Snapshot */}
-                  <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="font-heading text-base font-bold text-slate-900">
-                          Recent Orders & Fulfillment Status
-                        </h3>
-                        <p className="text-xs text-slate-500">
-                          Real-time orders placed via UPI, GPay, and Direct WhatsApp
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setActiveTab('orders')}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
-                      >
-                        <span>View All Orders</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-100">
-                          <tr>
-                            <th className="py-2.5 px-3">Order ID</th>
-                            <th className="py-2.5 px-3">Customer</th>
-                            <th className="py-2.5 px-3">Items</th>
-                            <th className="py-2.5 px-3">Total</th>
-                            <th className="py-2.5 px-3">Payment</th>
-                            <th className="py-2.5 px-3">Status</th>
-                            <th className="py-2.5 px-3 text-right">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {orders.slice(0, 5).map(ord => (
-                            <tr key={ord.id} className="hover:bg-slate-50/60 transition-colors">
-                              <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                                {ord.id}
-                              </td>
-                              <td className="py-3 px-3">
-                                <div className="font-semibold text-slate-900">{ord.customerName}</div>
-                                <div className="text-[11px] text-slate-400">{ord.phone}</div>
-                              </td>
-                              <td className="py-3 px-3 text-slate-600">
-                                {ord.items.map(it => `${it.product.name} (${it.selectedWeight} x${it.quantity})`).join(', ')}
-                              </td>
-                              <td className="py-3 px-3 font-bold text-slate-900">
-                                {formatINR(ord.totalAmount)}
-                              </td>
-                              <td className="py-3 px-3 text-[11px] text-slate-500">
-                                {ord.paymentMethod.split('(')[0]}
-                              </td>
-                              <td className="py-3 px-3">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  ord.status === 'Delivered'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : ord.status === 'Shipped'
-                                      ? 'bg-blue-100 text-blue-800'
-                                      : 'bg-amber-100 text-amber-800'
-                                }`}>
-                                  {ord.status}
-                                </span>
-                              </td>
-                              <td className="py-3 px-3 text-right">
-                                <button
-                                  onClick={() => {
-                                    setSelectedOrder(ord);
-                                    setNewStatus(ord.status);
-                                    setNewTracking(ord.trackingNumber);
-                                    setOrderNoteInput(adminNotes?.[ord.id] || '');
-                                  }}
-                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs cursor-pointer transition-colors"
-                                >
-                                  Update
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Quick Admin Actions Box */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-4">
-                      <h4 className="font-heading text-sm font-bold text-emerald-950 mb-1 flex items-center gap-1.5">
-                        <Package className="w-4 h-4 text-emerald-700" />
-                        <span>Update Rates & Stock</span>
-                      </h4>
-                      <p className="text-xs text-emerald-800/80 mb-3 leading-relaxed">
-                        Adjust product prices (e.g. Honey ₹300, Malai Thean ₹1300) or toggle stock status instantly.
-                      </p>
-                      <button
-                        onClick={() => setActiveTab('products')}
-                        className="text-xs font-bold text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        Manage Product Rates &rarr;
-                      </button>
-                    </div>
-
-                    <div className="bg-blue-50/60 border border-blue-200/80 rounded-2xl p-4">
-                      <h4 className="font-heading text-sm font-bold text-blue-950 mb-1 flex items-center gap-1.5">
-                        <Truck className="w-4 h-4 text-blue-700" />
-                        <span>Dispatch & Courier Tracking</span>
-                      </h4>
-                      <p className="text-xs text-blue-800/80 mb-3 leading-relaxed">
-                        Add courier tracking numbers and notify customers when their package is dispatched.
-                      </p>
-                      <button
-                        onClick={() => setActiveTab('orders')}
-                        className="text-xs font-bold text-blue-800 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        Update Order Tracking &rarr;
-                      </button>
-                    </div>
-
-                    <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-4">
-                      <h4 className="font-heading text-sm font-bold text-amber-950 mb-1 flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-amber-700" />
-                        <span>Customer Registry</span>
-                      </h4>
-                      <p className="text-xs text-amber-800/80 mb-3 leading-relaxed">
-                        Review customer contact phone numbers, delivery addresses, and repeat purchases.
-                      </p>
-                      <button
-                        onClick={() => setActiveTab('customers')}
-                        className="text-xs font-bold text-amber-800 hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        View Customer Profiles &rarr;
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ---------------- 2. ORDERS MANAGEMENT TAB ---------------- */}
-              {activeTab === 'orders' && (
-                <div className="space-y-4">
-                  {/* Search and Filters */}
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
-                    <div className="relative w-full sm:w-80">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search by Order ID, Customer, Phone..."
-                        value={orderSearch}
-                        onChange={(e) => setOrderSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <span className="text-xs font-semibold text-slate-500">Status:</span>
-                      <select
-                        value={orderStatusFilter}
-                        onChange={(e) => setOrderStatusFilter(e.target.value)}
-                        className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:border-emerald-600 cursor-pointer"
-                      >
-                        <option value="all">All Statuses ({orders.length})</option>
-                        <option value="Processing">Processing</option>
-                        <option value="Confirmed">Confirmed</option>
-                        <option value="Shipped">Shipped</option>
-                        <option value="Out for Delivery">Out for Delivery</option>
-                        <option value="Delivered">Delivered</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Orders Table */}
-                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-200">
-                          <tr>
-                            <th className="py-3 px-4">Order ID & Date</th>
-                            <th className="py-3 px-4">Customer Details</th>
-                            <th className="py-3 px-4">Delivery Location</th>
-                            <th className="py-3 px-4">Purchased Items</th>
-                            <th className="py-3 px-4">Amount</th>
-                            <th className="py-3 px-4">Status & Tracking</th>
-                            <th className="py-3 px-4 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {filteredOrders.length === 0 ? (
-                            <tr>
-                              <td colSpan={7} className="py-8 text-center text-slate-400">
-                                No customer orders matching your search or filter.
-                              </td>
-                            </tr>
-                          ) : (
-                            filteredOrders.map(ord => (
-                              <tr key={ord.id} className="hover:bg-slate-50/70 transition-colors">
-                                <td className="py-3.5 px-4">
-                                  <div className="font-mono font-bold text-slate-900">{ord.id}</div>
-                                  <div className="text-[11px] text-slate-400">{ord.date}</div>
-                                  {ord.transactionId && (
-                                    <div className="text-[10px] text-emerald-800 font-mono font-semibold truncate max-w-[130px] bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-1" title={ord.transactionId}>
-                                      {ord.transactionId}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="py-3.5 px-4">
-                                  <div className="font-semibold text-slate-900">{ord.customerName}</div>
-                                  <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                                    <Phone className="w-3 h-3 text-slate-400" />
-                                    <span>{ord.phone}</span>
-                                  </div>
-                                  {ord.email && (
-                                    <div className="text-[10px] text-slate-400 truncate max-w-[150px]">
-                                      {ord.email}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="py-3.5 px-4 text-slate-600">
-                                  <div className="line-clamp-2 max-w-[180px] leading-tight">
-                                    {ord.shippingAddress}, {ord.city} - {ord.postalCode}
-                                  </div>
-                                </td>
-                                <td className="py-3.5 px-4">
-                                  <div className="space-y-1 max-w-[200px]">
-                                    {ord.items.map((it, idx) => (
-                                      <div key={idx} className="text-slate-800 text-[11px] flex items-center justify-between">
-                                        <span className="truncate">{it.product.name}</span>
-                                        <span className="text-slate-400 font-mono ml-2 shrink-0">{it.selectedWeight} x{it.quantity}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </td>
-                                <td className="py-3.5 px-4">
-                                  <div className="font-bold text-slate-900">{formatINR(ord.totalAmount)}</div>
-                                  <div className="text-[10px] text-emerald-700 font-medium">
-                                    {ord.paymentMethod.split('(')[0]}
-                                  </div>
-                                </td>
-                                <td className="py-3.5 px-4">
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    ord.status === 'Delivered'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : ord.status === 'Shipped'
-                                        ? 'bg-blue-100 text-blue-800'
-                                        : ord.status === 'Out for Delivery'
-                                          ? 'bg-purple-100 text-purple-800'
-                                          : 'bg-amber-100 text-amber-800'
-                                  }`}>
-                                    {ord.status}
-                                  </span>
-                                  {ord.trackingNumber && (
-                                    <div className="font-mono text-[10px] text-slate-400 mt-1">
-                                      Track: {ord.trackingNumber}
-                                    </div>
-                                  )}
-                                  {adminNotes?.[ord.id] && (
-                                    <div className="text-[10px] text-slate-500 italic mt-0.5 max-w-[140px] truncate" title={adminNotes[ord.id]}>
-                                      Note: {adminNotes[ord.id]}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                                  <div className="inline-flex items-center justify-end gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedOrder(ord);
-                                        setNewStatus(ord.status);
-                                        setNewTracking(ord.trackingNumber);
-                                        setOrderNoteInput(adminNotes?.[ord.id] || '');
-                                      }}
-                                      className="px-2.5 py-1 bg-[#064E3B] hover:bg-[#047857] text-white font-bold rounded-lg text-xs cursor-pointer transition-colors"
-                                    >
-                                      Update
-                                    </button>
-                                    {confirmDeleteOrderId === ord.id ? (
-                                      <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-1.5 py-0.5">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            deleteOrder(ord.id);
-                                            setConfirmDeleteOrderId(null);
-                                          }}
-                                          className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded cursor-pointer"
-                                        >
-                                          Delete
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => setConfirmDeleteOrderId(null)}
-                                          className="px-1.5 py-0.5 text-slate-600 hover:text-slate-900 text-[10px] font-bold cursor-pointer"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() => setConfirmDeleteOrderId(ord.id)}
-                                        className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                                        title="Delete Order Record"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ---------------- 3. CUSTOMER DETAILS TAB ---------------- */}
-              {activeTab === 'customers' && (
-                <div className="space-y-4">
-                  {/* Search Bar */}
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
-                    <div className="relative w-full sm:w-80">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search customers by name, phone, city..."
-                        value={customerSearch}
-                        onChange={(e) => setCustomerSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600"
-                      />
-                    </div>
-                    <div className="text-xs text-slate-500 font-medium">
-                      Showing <strong>{filteredCustomers.length}</strong> unique registered customers
-                    </div>
-                  </div>
-
-                  {/* Customer Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredCustomers.map((cust, idx) => (
-                      <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="w-10 h-10 rounded-full bg-emerald-100 text-[#064E3B] font-heading font-bold text-base flex items-center justify-center">
-                              {cust.name.charAt(0)}
-                            </div>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                              {cust.ordersCount} {cust.ordersCount === 1 ? 'Order' : 'Orders'}
-                            </span>
-                          </div>
-
-                          <h4 className="font-heading text-base font-bold text-slate-900 mb-0.5">
-                            {cust.name}
-                          </h4>
-                          <div className="text-xs text-slate-500 flex items-center gap-1 mb-2">
-                            <MapPin className="w-3 h-3 text-slate-400" />
-                            <span>{cust.city || 'Tamil Nadu'}</span>
-                          </div>
-
-                          <div className="space-y-1 text-xs text-slate-600 mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                            <div className="flex items-center gap-2">
-                              <Phone className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                              <span className="font-mono font-medium">{cust.phone}</span>
-                            </div>
-                            {cust.email && (
-                              <div className="flex items-center gap-2 truncate">
-                                <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                <span className="truncate">{cust.email}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                          <div>
-                            <span className="text-slate-400 text-[11px] block">Total Spent:</span>
-                            <span className="font-bold text-slate-900">{formatINR(cust.totalSpent)}</span>
-                          </div>
-
-                          <a
-                            href={`https://wa.me/${cust.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(cust.name)}%2C%20greetings%20from%20Banaya%20Enterprise!`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-3 py-1.5 bg-[#25D366]/15 hover:bg-[#25D366]/25 text-[#128C7E] font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" />
-                            <span>WhatsApp</span>
-                          </a>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ---------------- 4. PRODUCTS & RATES TAB ---------------- */}
-              {activeTab === 'products' && (
-                <div className="space-y-5 animate-fadeIn">
-                  
-                  {/* Top Product Management Action Card */}
-                  <div className="bg-gradient-to-r from-[#064E3B] via-emerald-800 to-teal-800 rounded-2xl p-5 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-md">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-bold text-[10px] uppercase tracking-wider">
-                          Admin Inventory Control
-                        </span>
-                        <span className="text-emerald-200 text-xs">
-                          {products.length} Products Active
-                        </span>
-                      </div>
-                      <h3 className="font-heading text-xl sm:text-2xl font-bold text-white">
-                        Product Catalog & Rates Management
-                      </h3>
-                      <p className="text-xs text-emerald-100 max-w-xl mt-0.5">
-                        Modify customer prices, packaging images, weights, and descriptions. Click <strong>"Add New Product"</strong> to launch a new item on the live storefront.
-                      </p>
-                    </div>
-
+              {pendingVerificationEmail && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3 text-xs text-amber-950">
+                  <p className="font-semibold">Verify {pendingVerificationEmail}</p>
+                  <p className="text-amber-900 leading-relaxed">
+                    Open your <span className="font-mono">{pendingVerificationEmail}</span> inbox and click the Firebase verification link, then click Continue below.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      id="admin-add-new-product-banner-btn"
-                      onClick={handleStartNewProduct}
-                      className="px-5 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs sm:text-sm rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 flex items-center gap-2 cursor-pointer shrink-0 hover:scale-105 active:scale-95"
+                      type="button"
+                      disabled={isCheckingVerification}
+                      onClick={() => void handleRefreshVerification()}
+                      className="h-8 px-3 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white font-medium inline-flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Plus className="w-4 h-4 text-slate-950 stroke-[3]" />
-                      <span>＋ Add New Product</span>
+                      {isCheckingVerification ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5" />
+                      )}
+                      <span>I&apos;ve Verified &mdash; Continue</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void resendAdminVerificationEmail()}
+                      className="h-8 px-3 rounded-md border border-amber-300 bg-white hover:bg-amber-100/60 text-amber-900 font-medium cursor-pointer"
+                    >
+                      Resend Link
                     </button>
                   </div>
+                </div>
+              )}
 
-                  {/* Live Sync Confirmation Banner */}
-                  {lastSavedBanner && (
-                    <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-                      <div className="flex items-center gap-2.5 text-xs text-emerald-950">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                        <span>
-                          <strong>{lastSavedBanner.name}</strong> (₹{lastSavedBanner.price}) is saved & updated live on your website!
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onClose();
-                            setTimeout(() => {
-                              document.getElementById('shop-products')?.scrollIntoView({ behavior: 'smooth' });
-                            }, 120);
-                          }}
-                          className="px-3 py-1.5 bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-bold rounded-xl cursor-pointer inline-flex items-center gap-1.5"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-amber-300" />
-                          <span>View Live Website</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setLastSavedBanner(null)}
-                          className="p-1 text-emerald-700 hover:text-emerald-950 cursor-pointer"
-                          title="Dismiss"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
+              {adminAuthError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3.5 text-xs text-red-800 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1 flex-1">
+                    <p>{adminAuthError}</p>
+                    <button
+                      type="button"
+                      onClick={clearAdminAuthError}
+                      className="text-red-700 underline hover:no-underline"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {emailPasswordProviderDisabled && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2.5 text-xs text-slate-700">
+                  <p className="font-semibold text-slate-900">
+                    1-Time Firebase Setup: Enable Email/Password Sign-In
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-1 text-slate-600 leading-relaxed">
+                    <li>Open Firebase Console Authentication Sign-in methods.</li>
+                    <li>Select <span className="font-medium text-slate-900">Email/Password</span>, toggle <span className="font-medium text-slate-900">Enable</span>, and click <span className="font-medium text-slate-900">Save</span>.</li>
+                    <li>Return here and sign in with <span className="font-mono text-slate-900">{loginEmail || ADMIN_EMAIL}</span>.</li>
+                  </ol>
+                  <a
+                    href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/providers`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[#1B3624] font-medium hover:underline pt-1"
+                  >
+                    Enable Email/Password in Firebase Console
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+
+              {canAttemptFirstTimeSetup && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-2.5 text-xs text-slate-700">
+                  <p className="font-medium text-slate-900">
+                    First time setting up {loginEmail || ADMIN_EMAIL}?
+                  </p>
+                  <p className="text-slate-600">
+                    If you haven&apos;t registered this admin login in Firebase Authentication yet, initialize it once with your entered credentials:
+                  </p>
+                  <button
+                    type="button"
+                    disabled={isSigningIn}
+                    onClick={() => void handleFirstTimeRegister()}
+                    className="h-8 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-medium cursor-pointer"
+                  >
+                    Create {loginEmail || ADMIN_EMAIL} Login
+                  </button>
+                </div>
+              )}
+
+              {unauthorizedDomain && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs text-slate-700">
+                  <p className="font-semibold text-slate-900">
+                    1-Time Domain Allowlist Step Needed
+                  </p>
+                  <p className="leading-relaxed">
+                    Add your live hostname to Firebase Console under{' '}
+                    <span className="font-medium">Authentication &rarr; Settings &rarr; Authorized domains</span>:
+                  </p>
+                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md px-2.5 py-1.5">
+                    <code className="flex-1 font-mono text-[11px] text-slate-900 truncate">
+                      {unauthorizedDomain}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={handleCopyDomain}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium transition-colors"
+                    >
+                      {domainCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      {domainCopied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  <a
+                    href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[#1B3624] font-medium hover:underline"
+                  >
+                    Open Firebase Authentication Settings
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+
+              <form onSubmit={handleEmailSignIn} className="space-y-3.5">
+                <div>
+                  <label htmlFor="admin-email-input" className="block text-xs font-medium text-slate-700 mb-1">
+                    Admin Mail ID
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      id="admin-email-input"
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder={ADMIN_EMAIL}
+                      className="w-full h-10 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1B3624]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="admin-password-input" className="block text-xs font-medium text-slate-700 mb-1">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      id="admin-password-input"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Enter admin password"
+                      className="w-full h-10 pl-9 pr-10 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#1B3624]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!authReady || isSigningIn}
+                  className="w-full h-10 rounded-lg bg-[#1B3624] hover:bg-[#14291b] disabled:opacity-60 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  {!authReady || isSigningIn ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{!authReady ? 'Checking session...' : 'Signing in...'}</span>
+                    </>
+                  ) : (
+                    <span>Sign In to Admin Portal</span>
                   )}
+                </button>
+              </form>
 
-                  {/* Quick Product Section Selector (Honey, Malai Thean, ABC Malt, etc.) */}
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-emerald-100 text-[#064E3B] flex items-center justify-center font-bold text-xs">
-                          ⚡
-                        </div>
-                        <div>
-                          <span className="text-xs font-bold text-slate-900 block">
-                            Quick Product Selector & Editor
-                          </span>
-                          <span className="text-[11px] text-slate-500">
-                            Click any item below to immediately view and edit its prices, primary front image, and secondary side phase images
-                          </span>
-                        </div>
-                      </div>
+              <div className="relative flex items-center py-1">
+                <div className="flex-1 border-t border-slate-200" />
+                <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                  or
+                </span>
+                <div className="flex-1 border-t border-slate-200" />
+              </div>
 
-                      {/* Direct Product Picker Dropdown */}
-                      <select
-                        onChange={(e) => {
-                          const chosen = products.find(p => p.id === e.target.value);
-                          if (chosen) handleStartEditProduct(chosen);
-                        }}
-                        value=""
-                        className="px-3 py-1.5 text-xs rounded-xl border border-emerald-300 bg-emerald-50/50 font-bold text-emerald-950 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                      >
-                        <option value="" disabled>Select Product to Modify...</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({p.category}) — ₹{p.price} [{(p.gallery?.length || 1)} Images]
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+              <button
+                type="button"
+                disabled={!authReady || isSigningIn}
+                onClick={handleGoogleSignIn}
+                className="w-full h-10 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <span>Sign in with Google (Authorized Admin)</span>
+              </button>
 
-                    {/* Interactive Quick-Jump Pills */}
-                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                      {products.map(p => {
-                        const isHoney = p.name.toLowerCase().includes('honey') || p.categorySlug.includes('honey');
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => handleStartEditProduct(p)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
-                              isHoney
-                                ? 'bg-amber-50 hover:bg-amber-100/80 text-amber-950 border-amber-300 shadow-2xs'
-                                : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-emerald-300'
-                            }`}
-                            title={`Click to edit ${p.name}`}
-                          >
-                            <img
-                              src={p.image}
-                              alt={p.name}
-                              onLoad={handleProductImageLoad}
-                              onError={(e) => handleProductImageError(e, p)}
-                              className="w-5 h-5 rounded-md object-contain bg-white shrink-0 border border-slate-200"
-                            />
-                            <span className="font-bold">{p.name}</span>
-                            <span className="font-mono text-[11px] font-bold text-emerald-800">₹{p.price}</span>
-                            <span className="text-[10px] bg-white/80 px-1 rounded text-slate-500 font-mono">
-                              {(p.gallery && p.gallery.length > 0 ? p.gallery.length : 1)} imgs
-                            </span>
-                          </button>
-                        );
-                      })}
+              {firebaseUser && (
+                <button
+                  type="button"
+                  onClick={() => void signOutAdmin()}
+                  className="w-full h-9 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-600 transition-colors"
+                >
+                  Sign Out ({firebaseUser.email})
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==================== MAIN ADMIN WORKSPACE ====================
+  const navItems: Array<{ id: AdminTab; label: string; icon: React.ReactNode; count?: number }> = [
+    { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'products', label: 'Products & Photos', icon: <Package className="w-4 h-4" />, count: products.length },
+    { id: 'folders', label: 'Image Folders', icon: <FolderOpen className="w-4 h-4" />, count: mediaFolders.length },
+    { id: 'orders', label: 'Orders', icon: <ShoppingBag className="w-4 h-4" />, count: orders.length },
+    { id: 'customers', label: 'Customers', icon: <Users className="w-4 h-4" />, count: customers.length }
+  ];
+
+  const activeNavLabel = navItems.find((item) => item.id === activeTab)?.label || 'Overview';
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4">
+      <div className="w-full max-w-[1440px] h-full sm:h-[92vh] bg-white sm:rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col lg:flex-row">
+        {/* LEFT SIDEBAR */}
+        <aside className="lg:w-60 shrink-0 bg-slate-50 border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col">
+          <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <img
+                src="/images/banaya_logo.png"
+                alt="Banaya"
+                className="w-7 h-7 rounded-md object-contain bg-white border border-slate-200 p-0.5 shrink-0"
+              />
+              <span className="text-sm font-semibold text-slate-900 truncate">
+                Banaya Admin
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close Admin"
+              className="lg:hidden p-1.5 rounded-md text-slate-500 hover:bg-slate-200/70"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Navigation */}
+          <nav className="p-2 flex lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible lg:flex-1">
+            {navItems.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id)}
+                  className={`flex items-center justify-between gap-2.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-[#1B3624] text-white'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <span className="flex items-center gap-2.5">
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </span>
+                  {item.count !== undefined && (
+                    <span
+                      className={`text-xs font-mono tabular-nums ${
+                        isActive ? 'text-emerald-200' : 'text-slate-400'
+                      }`}
+                    >
+                      {item.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Cloud Status & Account */}
+          <div className="hidden lg:block p-3.5 border-t border-slate-200 space-y-3 bg-slate-50">
+            <div className="flex items-center justify-between text-xs">
+              <span className="flex items-center gap-1.5 text-slate-600 font-medium">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    serverSynced ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+                {serverSynced ? 'Cloud Live Sync' : 'Connecting...'}
+              </span>
+              {lastSyncedAt && (
+                <span className="text-[11px] font-mono tabular-nums text-slate-400">
+                  {new Date(lastSyncedAt).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
+              <span className="text-xs text-slate-600 truncate" title={firebaseUser?.email || ''}>
+                {firebaseUser?.email || ADMIN_EMAIL}
+              </span>
+              <button
+                type="button"
+                onClick={() => void signOutAdmin()}
+                title="Sign Out"
+                className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        {/* MAIN CONTENT AREA */}
+        <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
+          {/* Top Header */}
+          <header className="h-14 shrink-0 border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-3 bg-white">
+            <div className="flex items-center gap-2 min-w-0 text-sm">
+              <span className="text-slate-400 hidden sm:inline">Admin</span>
+              <span className="text-slate-300 hidden sm:inline">/</span>
+              <h1 className="font-semibold text-slate-900 truncate">{activeNavLabel}</h1>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleViewLiveStore}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <span>View Live Website</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void signOutAdmin()}
+                className="lg:hidden inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="hidden lg:inline-flex p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </header>
+
+          {/* Scrollable Workspace Content */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+            {/* Live Sync Confirmation Banner */}
+            {lastSavedBanner && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={lastSavedBanner.image}
+                    alt={lastSavedBanner.name}
+                    className="w-9 h-9 rounded-md object-contain bg-white border border-emerald-200 p-0.5 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-emerald-950 truncate">
+                      {lastSavedBanner.name} updated on live website
+                    </p>
+                    <p className="text-xs text-emerald-700">
+                      Synced automatically across all browsers and customer devices.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleViewLiveStore}
+                    className="px-3 py-1.5 rounded-md bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    View Live Website
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLastSavedBanner(null)}
+                    className="p-1 text-emerald-700 hover:text-emerald-900"
+                    aria-label="Dismiss banner"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 1. OVERVIEW TAB */}
+            {activeTab === 'overview' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1">
+                    <p className="text-xs font-medium text-slate-500">Total Sales</p>
+                    <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                      &#8377;{totalRevenue.toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1">
+                    <p className="text-xs font-medium text-slate-500">Total Orders</p>
+                    <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                      {orders.length}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1">
+                    <p className="text-xs font-medium text-slate-500">Pending Fulfillment</p>
+                    <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                      {pendingOrdersCount}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1">
+                    <p className="text-xs font-medium text-slate-500">Catalog Products</p>
+                    <div className="flex items-baseline gap-2">
+                      <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                        {products.length}
+                      </p>
+                      <span className="text-xs text-slate-500 tabular-nums">
+                        ({outOfStockCount} out of stock)
+                      </span>
                     </div>
                   </div>
+                </div>
 
-                  {/* Search, Category Filter & Quick Stats Bar */}
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3 shadow-xs">
-                    <div className="relative w-full md:w-80">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-slate-900">Recent Orders</h2>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('orders')}
+                      className="text-xs font-medium text-[#1B3624] hover:underline"
+                    >
+                      View all
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
+                          <th className="py-2.5 px-4">Order</th>
+                          <th className="py-2.5 px-4">Customer</th>
+                          <th className="py-2.5 px-4">Items</th>
+                          <th className="py-2.5 px-4">Amount</th>
+                          <th className="py-2.5 px-4">Status</th>
+                          <th className="py-2.5 px-4 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {orders.slice(0, 6).map((ord) => (
+                          <tr key={ord.id} className="hover:bg-slate-50/80">
+                            <td className="py-3 px-4 font-mono text-xs font-medium text-slate-900">
+                              {ord.id}
+                            </td>
+                            <td className="py-3 px-4 text-slate-700">{ord.customerName}</td>
+                            <td className="py-3 px-4 text-slate-500 tabular-nums">
+                              {ord.items.reduce((s, it) => s + it.quantity, 0)}
+                            </td>
+                            <td className="py-3 px-4 font-medium text-slate-900 tabular-nums">
+                              &#8377;{ord.totalAmount.toLocaleString('en-IN')}
+                            </td>
+                            <td className="py-3 px-4 text-xs font-medium text-slate-700">
+                              {ord.status}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => openOrderEditor(ord)}
+                                className="px-2.5 py-1 rounded border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                              >
+                                Manage
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {orders.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-sm text-slate-500">
+                              No orders recorded yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2. PRODUCTS & PHOTOS TAB */}
+            {activeTab === 'products' && (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
-                        placeholder="Search products by name, Tamil name, ID..."
                         value={productSearch}
                         onChange={(e) => setProductSearch(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-emerald-600"
+                        placeholder="Search products..."
+                        className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
                       />
                     </div>
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white focus:outline-none focus:border-slate-400"
+                    >
+                      <option value="all">All Categories</option>
+                      {CATEGORIES.map((cat) => (
+                        <option key={cat.id} value={cat.slug}>
+                          {cat.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-slate-500">Category:</span>
-                        <select
-                          value={productCategoryFilter}
-                          onChange={(e) => setProductCategoryFilter(e.target.value)}
-                          className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:border-emerald-600 cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={openAddProductModal}
+                    className="h-9 px-4 rounded-lg bg-[#1B3624] hover:bg-[#14291b] text-white text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Product</span>
+                  </button>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
+                          <th className="py-3 px-4">Product</th>
+                          <th className="py-3 px-4">Category</th>
+                          <th className="py-3 px-4">Default Pack</th>
+                          <th className="py-3 px-4">Live Price (&#8377;)</th>
+                          <th className="py-3 px-4">Stock</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {filteredProducts.map((prod) => {
+                          const draftPrice = inlinePrices[prod.id];
+                          const currentPriceVal = draftPrice !== undefined ? draftPrice : String(prod.price);
+                          const priceDirty =
+                            draftPrice !== undefined &&
+                            draftPrice.trim() !== '' &&
+                            Number(draftPrice) !== prod.price;
+                          const isSavingRow = savingRowId === prod.id;
+                          const galleryCount = Array.from(
+                            new Set([prod.image, ...(prod.gallery || [])].filter(Boolean))
+                          ).length;
+
+                          return (
+                            <tr key={prod.id} className="hover:bg-slate-50/70">
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-3 min-w-[220px]">
+                                  <img
+                                    src={prod.image}
+                                    alt={prod.name}
+                                    onLoad={handleProductImageLoad}
+                                    onError={(e) => handleProductImageError(e, prod)}
+                                    className="w-12 h-12 rounded-md object-contain bg-slate-50 border border-slate-200 p-0.5 shrink-0"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="font-medium text-slate-900 truncate">{prod.name}</p>
+                                    <p className="text-xs text-slate-500 truncate">
+                                      {prod.tamilName ? `${prod.tamilName} · ` : ''}
+                                      <span className="tabular-nums">
+                                        {galleryCount} {galleryCount === 1 ? 'photo' : 'photos'}
+                                      </span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 text-xs text-slate-600 whitespace-nowrap">
+                                {prod.category}
+                              </td>
+                              <td className="py-3 px-4 text-xs text-slate-600 whitespace-nowrap tabular-nums">
+                                {prod.defaultWeight}
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={currentPriceVal}
+                                    onChange={(e) =>
+                                      setInlinePrices((prev) => ({ ...prev, [prod.id]: e.target.value }))
+                                    }
+                                    className="w-20 h-8 px-2 rounded border border-slate-200 text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-400"
+                                  />
+                                  {priceDirty && (
+                                    <button
+                                      type="button"
+                                      disabled={isSavingRow}
+                                      onClick={() => void handleInlinePriceUpdate(prod)}
+                                      className="h-8 px-2.5 rounded bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
+                                    >
+                                      {isSavingRow ? '...' : 'Update'}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  disabled={isSavingRow}
+                                  onClick={() => void handleToggleStock(prod)}
+                                  className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors cursor-pointer ${
+                                    prod.inStock
+                                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                                      : 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {prod.inStock ? 'In Stock' : 'Out of Stock'}
+                                </button>
+                              </td>
+                              <td className="py-3 px-4 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditProductModal(prod)}
+                                    className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 transition-colors cursor-pointer"
+                                  >
+                                    Edit &amp; Photos
+                                  </button>
+
+                                  {confirmDeleteProductId === prod.id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          await deleteProduct(prod.id);
+                                          setConfirmDeleteProductId(null);
+                                        }}
+                                        className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium hover:bg-red-700"
+                                      >
+                                        Delete
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteProductId(null)}
+                                        className="px-2 py-1 rounded border border-slate-200 text-xs text-slate-600 hover:bg-slate-50"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteProductId(prod.id)}
+                                      aria-label={`Delete ${prod.name}`}
+                                      className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {filteredProducts.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                              No matching products found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. IMAGE FOLDERS TAB */}
+            {activeTab === 'folders' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left Sidebar: Folders */}
+                <div className="lg:col-span-4 rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+                  <form onSubmit={handleCreateFolderSubmit} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder="New folder name..."
+                      className="flex-1 h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                    />
+                    <button
+                      type="submit"
+                      className="h-9 px-3 rounded-lg bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer shrink-0"
+                    >
+                      Create
+                    </button>
+                  </form>
+
+                  <input
+                    ref={folderDirUploadRef}
+                    type="file"
+                    multiple
+                    {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
+                    className="hidden"
+                    onChange={async (e) => {
+                      const files = e.target.files;
+                      if (!files || files.length === 0) return;
+                      setIsUploadingFolder(true);
+                      try {
+                        const created = await uploadLocalDirectoryAsFolder(Array.from(files));
+                        if (created) setSelectedFolderId(created.id);
+                      } finally {
+                        setIsUploadingFolder(false);
+                        if (folderDirUploadRef.current) folderDirUploadRef.current.value = '';
+                      }
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    disabled={isUploadingFolder}
+                    onClick={() => folderDirUploadRef.current?.click()}
+                    className="w-full h-9 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    {isUploadingFolder ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Uploading folder...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FolderUp className="w-3.5 h-3.5" />
+                        <span>Upload Local Folder</span>
+                      </>
+                    )}
+                  </button>
+
+                  <div className="border-t border-slate-200 pt-3 space-y-1 max-h-[55vh] overflow-y-auto">
+                    {mediaFolders.map((folder) => {
+                      const active = selectedFolder?.id === folder.id;
+                      return (
+                        <div
+                          key={folder.id}
+                          className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                            active
+                              ? 'bg-slate-100 text-slate-900 font-medium'
+                              : 'text-slate-600 hover:bg-slate-50'
+                          }`}
                         >
-                          <option value="all">All Categories ({products.length})</option>
-                          {CATEGORIES.map(c => (
-                            <option key={c.id} value={c.slug}>{c.name}</option>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedFolderId(folder.id);
+                              setConfirmAction(null);
+                            }}
+                            className="flex-1 flex items-center justify-between text-left min-w-0 cursor-pointer"
+                          >
+                            <span className="truncate">{folder.name}</span>
+                            <span className="text-xs font-mono tabular-nums text-slate-400 ml-2">
+                              {folder.images.length}
+                            </span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {mediaFolders.length === 0 && (
+                      <p className="text-xs text-slate-500 py-4 text-center">
+                        No folders created yet.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Panel: Selected Folder Contents */}
+                <div className="lg:col-span-8 rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+                  {selectedFolder ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">
+                            {selectedFolder.name}
+                          </h2>
+                          <p className="text-xs text-slate-500 tabular-nums">
+                            {selectedFolder.images.length}{' '}
+                            {selectedFolder.images.length === 1 ? 'photo' : 'photos'} stored in cloud
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            ref={folderFilesUploadRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={async (e) => {
+                              const files = e.target.files;
+                              if (!files || files.length === 0) return;
+                              setIsUploadingFolder(true);
+                              try {
+                                await addImagesToFolder(selectedFolder.id, Array.from(files));
+                              } finally {
+                                setIsUploadingFolder(false);
+                                if (folderFilesUploadRef.current) folderFilesUploadRef.current.value = '';
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={isUploadingFolder}
+                            onClick={() => folderFilesUploadRef.current?.click()}
+                            className="h-8 px-3 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Add Photos</span>
+                          </button>
+
+                          {selectedFolder.images.length > 0 && (
+                            confirmAction?.type === 'clear-folder' && confirmAction.folderId === selectedFolder.id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await clearMediaFolder(selectedFolder.id);
+                                    setConfirmAction(null);
+                                  }}
+                                  className="h-8 px-2.5 rounded bg-amber-600 text-white text-xs font-medium"
+                                >
+                                  Confirm Clear
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmAction(null)}
+                                  className="h-8 px-2 rounded border border-slate-200 text-xs text-slate-600"
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setConfirmAction({ type: 'clear-folder', folderId: selectedFolder.id })
+                                }
+                                className="h-8 px-2.5 rounded-md border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700"
+                              >
+                                Clear Photos
+                              </button>
+                            )
+                          )}
+
+                          {confirmAction?.type === 'delete-folder' && confirmAction.folderId === selectedFolder.id ? (
+                            <span className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await deleteMediaFolder(selectedFolder.id);
+                                  setConfirmAction(null);
+                                }}
+                                className="h-8 px-2.5 rounded bg-red-600 text-white text-xs font-medium"
+                              >
+                                Confirm Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmAction(null)}
+                                className="h-8 px-2 rounded border border-slate-200 text-xs text-slate-600"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmAction({ type: 'delete-folder', folderId: selectedFolder.id })
+                              }
+                              className="h-8 px-2.5 rounded-md border border-red-200 text-xs font-medium text-red-600 hover:bg-red-50"
+                            >
+                              Delete Folder
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Quick Assign Bar */}
+                      <div className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <label htmlFor="folder-target-product" className="text-xs font-medium text-slate-600">
+                          Apply photo directly to live product:
+                        </label>
+                        <select
+                          id="folder-target-product"
+                          value={targetProductId}
+                          onChange={(e) => setTargetProductId(e.target.value)}
+                          className="h-8 px-2.5 rounded border border-slate-200 bg-white text-xs text-slate-800 flex-1 min-w-[200px]"
+                        >
+                          {products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
                           ))}
                         </select>
                       </div>
 
-                      <button
-                        onClick={handleStartNewProduct}
-                        className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add Item</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Products Table */}
-                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-500 font-semibold uppercase tracking-wider border-b border-slate-200">
-                          <tr>
-                            <th className="py-3 px-4">Product & Images (Front + Side Phase)</th>
-                            <th className="py-3 px-4">Category</th>
-                            <th className="py-3 px-4">Default Weight</th>
-                            <th className="py-3 px-4">Customer Rate (₹)</th>
-                            <th className="py-3 px-4">Stock Status</th>
-                            <th className="py-3 px-4">Rating</th>
-                            <th className="py-3 px-4 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {filteredProducts.map(prod => {
-                            const isEditingQuickPrice = quickPrices[prod.id] !== undefined;
-                            const currentQuickVal = isEditingQuickPrice ? quickPrices[prod.id] : prod.price;
-                            const allImages = prod.gallery && prod.gallery.length > 0 ? prod.gallery : [prod.image];
-
+                      {/* Grid */}
+                      {selectedFolder.images.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {selectedFolder.images.map((img) => {
+                            const isDeletingImg =
+                              confirmAction?.type === 'delete-image' && confirmAction.imageId === img.id;
                             return (
-                              <tr key={prod.id} className="hover:bg-slate-50/70 transition-colors">
-                                <td className="py-3.5 px-4">
-                                  <div className="space-y-2">
-                                    <div className="flex items-center gap-3">
-                                      <div 
-                                        onClick={() => handleStartEditProduct(prod)}
-                                        className="w-13 h-13 rounded-xl bg-white p-1 shrink-0 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer hover:border-emerald-500 transition-colors relative group"
-                                        title="Click to modify photo or details"
-                                      >
-                                        <img
-                                          src={prod.image}
-                                          alt={prod.name}
-                                          onLoad={handleProductImageLoad}
-                                          onError={(e) => handleProductImageError(e, prod)}
-                                          className="w-full h-full object-contain object-center"
-                                        />
-                                        <div className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity rounded-xl">
-                                          <Camera className="w-3.5 h-3.5" />
-                                        </div>
-                                      </div>
-                                      <div>
-                                        <div className="font-heading font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                                          <span>{prod.name}</span>
-                                          <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold font-mono">
-                                            {allImages.length} {allImages.length === 1 ? 'view' : 'views'}
-                                          </span>
-                                        </div>
-                                        {prod.tamilName && (
-                                          <div className="text-[11px] text-emerald-700 font-medium">{prod.tamilName}</div>
-                                        )}
-                                        <div className="text-[10px] text-slate-400 font-mono">ID: {prod.id}</div>
-                                      </div>
-                                    </div>
-
-                                    {/* Gallery Thumbnails Strip (Primary + Secondary Side Phase / Back) */}
-                                    <div className="flex items-center gap-1.5 pl-1 overflow-x-auto">
-                                      {allImages.map((imgUrl, imgIdx) => (
-                                        <div 
-                                          key={imgIdx} 
-                                          onClick={() => handleStartEditProduct(prod)}
-                                          className="relative group cursor-pointer shrink-0"
-                                          title={imgIdx === 0 ? 'Primary Front View' : `Secondary View #${imgIdx}`}
-                                        >
-                                          <img
-                                            src={imgUrl}
-                                            alt=""
-                                            onLoad={handleProductImageLoad}
-                                            onError={(e) => handleProductImageError(e, prod)}
-                                            className={`w-7 h-7 rounded-md object-contain bg-white border ${
-                                              imgIdx === 0 ? 'border-emerald-500 ring-1 ring-emerald-400' : 'border-slate-200'
-                                            }`}
-                                          />
-                                          <span className="absolute -bottom-1 -right-1 text-[8px] font-bold px-1 rounded bg-slate-900/80 text-white leading-none">
-                                            {imgIdx === 0 ? 'P' : `S${imgIdx}`}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-4">
-                                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[11px] font-medium">
-                                    {prod.category}
-                                  </span>
-                                </td>
-
-                                <td className="py-3 px-4 font-medium text-slate-700">
-                                  <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-md text-[11px] font-semibold border border-emerald-200">
-                                    {prod.defaultWeight}
-                                  </span>
-                                </td>
-
-                                {/* Inline Rate Modifier */}
-                                <td className="py-3 px-4">
-                                  <div className="flex items-center gap-1.5">
-                                    <div className="relative w-24">
-                                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">₹</span>
-                                      <input
-                                        type="number"
-                                        step="any"
-                                        value={currentQuickVal}
-                                        onChange={(e) => handleQuickPriceChange(prod.id, Number(e.target.value))}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            handleSaveQuickPrice(prod);
-                                          }
-                                        }}
-                                        className={`w-full pl-6 pr-2 py-1 text-xs font-bold rounded-lg border ${
-                                          isEditingQuickPrice ? 'border-amber-400 bg-amber-50/50' : 'border-slate-200 bg-slate-50'
-                                        } focus:outline-none focus:border-emerald-600 focus:bg-white`}
-                                        title="Edit price and press Enter or click Save"
-                                      />
-                                    </div>
-
-                                    {isEditingQuickPrice && (
+                              <div
+                                key={img.id}
+                                className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col"
+                              >
+                                <div className="aspect-square bg-slate-50 p-2 flex items-center justify-center border-b border-slate-200">
+                                  <img
+                                    src={img.url}
+                                    alt={img.name}
+                                    className="w-full h-full object-contain"
+                                  />
+                                </div>
+                                <div className="p-2.5 space-y-2 flex-1 flex flex-col justify-between">
+                                  <p className="text-xs text-slate-700 truncate" title={img.name}>
+                                    {img.name}
+                                  </p>
+                                  <div className="flex flex-col gap-1.5">
+                                    <div className="grid grid-cols-2 gap-1">
                                       <button
                                         type="button"
-                                        onClick={() => handleSaveQuickPrice(prod)}
-                                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
-                                        title="Save New Rate Immediately"
+                                        onClick={() => void handleApplyFolderPhotoToProduct(img.url, 'main')}
+                                        className="py-1 rounded bg-[#1B3624] hover:bg-[#14291b] text-white text-[11px] font-medium cursor-pointer"
                                       >
-                                        <Check className="w-3 h-3" />
-                                        <span>Save</span>
+                                        Set Main
                                       </button>
-                                    )}
-                                  </div>
-
-                                  <div className="text-[10px] text-slate-400 line-through mt-0.5">
-                                    MRP: {formatINR(prod.originalPrice)}
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-4">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateProduct({ ...prod, inStock: !prod.inStock });
-                                    }}
-                                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors ${
-                                      prod.inStock
-                                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                        : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
-                                    }`}
-                                    title="Click to toggle in-stock / out-of-stock"
-                                  >
-                                    {prod.inStock ? 'In Stock (Active)' : 'Out of Stock'}
-                                  </button>
-                                </td>
-
-                                <td className="py-3 px-4">
-                                  <span className="font-bold text-slate-900">★ {prod.rating}</span>
-                                  <span className="text-[10px] text-slate-400 block">({prod.reviewsCount} reviews)</span>
-                                </td>
-
-                                <td className="py-3 px-4 text-right whitespace-nowrap">
-                                  <div className="inline-flex items-center justify-end gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStartEditProduct(prod)}
-                                      className="px-3 py-1.5 bg-[#064E3B] hover:bg-[#047857] text-white font-bold rounded-lg text-xs cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-2xs"
-                                    >
-                                      <Edit2 className="w-3 h-3 text-amber-300" />
-                                      <span>Modify</span>
-                                    </button>
-                                    {confirmDeleteProductId === prod.id ? (
-                                      <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-1.5 py-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleApplyFolderPhotoToProduct(img.url, 'gallery')}
+                                        className="py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-medium cursor-pointer"
+                                      >
+                                        + Gallery
+                                      </button>
+                                    </div>
+                                    {isDeletingImg ? (
+                                      <div className="flex items-center gap-1 pt-0.5">
                                         <button
                                           type="button"
-                                          onClick={() => {
-                                            deleteProduct(prod.id);
-                                            setConfirmDeleteProductId(null);
+                                          onClick={async () => {
+                                            await deleteImageFromFolder(selectedFolder.id, img.id);
+                                            setConfirmAction(null);
                                           }}
-                                          className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded cursor-pointer"
+                                          className="flex-1 py-1 rounded bg-red-600 text-white text-[11px] font-medium"
                                         >
                                           Delete
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => setConfirmDeleteProductId(null)}
-                                          className="px-1.5 py-0.5 text-slate-600 hover:text-slate-900 text-[10px] font-bold cursor-pointer"
+                                          onClick={() => setConfirmAction(null)}
+                                          className="flex-1 py-1 rounded border border-slate-200 text-slate-600 text-[11px]"
                                         >
                                           Cancel
                                         </button>
@@ -1776,1548 +1639,974 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                     ) : (
                                       <button
                                         type="button"
-                                        onClick={() => setConfirmDeleteProductId(prod.id)}
-                                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                                        title="Delete Product"
+                                        onClick={() =>
+                                          setConfirmAction({
+                                            type: 'delete-image',
+                                            folderId: selectedFolder.id,
+                                            imageId: img.id
+                                          })
+                                        }
+                                        className="text-[11px] text-slate-400 hover:text-red-600 text-left"
                                       >
-                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Remove photo
                                       </button>
                                     )}
                                   </div>
-                                </td>
-                              </tr>
+                                </div>
+                              </div>
                             );
                           })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ---------------- 5. IMAGE FOLDERS MANAGER TAB ---------------- */}
-              {activeTab === 'media' && (
-                <div className="space-y-5">
-                  {/* Top Action Bar: Create Folder + Upload Whole Local Folder */}
-                  <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      <div>
-                        <h3 className="font-heading text-base font-bold text-slate-900 flex items-center gap-2">
-                          <FolderOpen className="w-5 h-5 text-emerald-700" />
-                          <span>Product Image Folders (Add, Upload Folder &amp; Delete)</span>
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Create folders, upload an entire image folder from your computer/phone, delete unwanted photos or folders, and assign images straight to live products.
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <label className="px-3.5 py-2 bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors">
-                          <FolderOpen className="w-4 h-4 text-amber-300" />
-                          <span>{isUploadingMediaBatch ? 'Uploading...' : 'Upload Folder from Device'}</span>
-                          <input
-                            type="file"
-                            multiple
-                            accept="image/*"
-                            disabled={isUploadingMediaBatch}
-                            onChange={handleUploadWholeDirectory}
-                            className="hidden"
-                            {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
-                          />
-                        </label>
-                      </div>
-                    </div>
-
-                    {/* Create Folder Form */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-slate-100">
-                      <input
-                        type="text"
-                        value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            void handleCreateMediaFolder();
-                          }
-                        }}
-                        placeholder="Enter new folder name (e.g. Festival Gift Packs, Pure Honey Angles...)"
-                        className="flex-1 px-3.5 py-2 text-xs rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600 font-medium"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleCreateMediaFolder()}
-                        className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                      >
-                        <FolderPlus className="w-4 h-4" />
-                        <span>Add New Folder</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Folder Sidebar + Folder Contents Grid */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-                    {/* Left: Folders List with Add/Delete */}
-                    <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                          All Folders ({mediaFolders.length})
-                        </span>
-                        <span className="text-[11px] font-semibold text-slate-500">
-                          {mediaFolders.reduce((sum, f) => sum + f.images.length, 0)} Total Photos
-                        </span>
-                      </div>
-
-                      {mediaFolders.length === 0 ? (
-                        <div className="p-6 text-center border border-dashed border-slate-300 rounded-xl bg-slate-50">
-                          <FolderOpen className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                          <p className="text-xs text-slate-500">No folders yet. Create one or upload a folder from your device.</p>
                         </div>
                       ) : (
-                        <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-                          {mediaFolders.map(folder => {
-                            const isActive = activeMediaFolder?.id === folder.id;
-                            const coverImg = folder.images[0]?.url;
+                        <div className="py-12 text-center border border-dashed border-slate-200 rounded-lg text-sm text-slate-500">
+                          No photos in this folder yet. Click &ldquo;Add Photos&rdquo; above to upload.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="py-12 text-center text-sm text-slate-500">
+                      Create a folder on the left to start organizing product images.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
-                            return (
-                              <div
-                                key={folder.id}
-                                className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${
-                                  isActive
-                                    ? 'bg-emerald-50 border-emerald-500 shadow-2xs'
-                                    : 'bg-white border-slate-200 hover:border-emerald-300'
-                                }`}
-                              >
+            {/* 4. ORDERS TAB */}
+            {activeTab === 'orders' && (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={orderSearch}
+                      onChange={(e) => setOrderSearch(e.target.value)}
+                      placeholder="Search orders, customer, phone..."
+                      className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
+                    />
+                  </div>
+                  <select
+                    value={orderStatusFilter}
+                    onChange={(e) => setOrderStatusFilter(e.target.value)}
+                    className="h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-700 bg-white focus:outline-none focus:border-slate-400"
+                  >
+                    <option value="all">All Statuses</option>
+                    {ORDER_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
+                          <th className="py-3 px-4">Order ID</th>
+                          <th className="py-3 px-4">Date</th>
+                          <th className="py-3 px-4">Customer</th>
+                          <th className="py-3 px-4">Total</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4">Tracking</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {filteredOrders.map((ord) => (
+                          <tr key={ord.id} className="hover:bg-slate-50/70">
+                            <td className="py-3 px-4 font-mono text-xs font-medium text-slate-900">
+                              {ord.id}
+                            </td>
+                            <td className="py-3 px-4 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                              {ord.date}
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="text-slate-900 font-medium">{ord.customerName}</p>
+                              <p className="text-xs text-slate-500">{ord.phone}</p>
+                            </td>
+                            <td className="py-3 px-4 font-medium text-slate-900 tabular-nums">
+                              &#8377;{ord.totalAmount.toLocaleString('en-IN')}
+                            </td>
+                            <td className="py-3 px-4 text-xs font-medium text-slate-700">
+                              {ord.status}
+                            </td>
+                            <td className="py-3 px-4 font-mono text-xs text-slate-500">
+                              {ord.trackingNumber || '—'}
+                            </td>
+                            <td className="py-3 px-4 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => setSelectedMediaFolderId(folder.id)}
-                                  className="flex items-center gap-2.5 flex-1 min-w-0 text-left cursor-pointer"
+                                  onClick={() => openOrderEditor(ord)}
+                                  className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 cursor-pointer"
                                 >
-                                  <div className="w-11 h-11 rounded-lg bg-white border border-slate-200 shrink-0 flex items-center justify-center overflow-hidden p-1">
-                                    {coverImg ? (
-                                      <img
-                                        src={coverImg}
-                                        alt={folder.name}
-                                        onLoad={handleProductImageLoad}
-                                        onError={(e) => handleProductImageError(e)}
-                                        className="w-full h-full object-contain"
-                                      />
-                                    ) : (
-                                      <FolderOpen className="w-5 h-5 text-emerald-700" />
-                                    )}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="text-xs font-bold text-slate-900 truncate">{folder.name}</div>
-                                    <div className="text-[11px] text-slate-500 font-medium">
-                                      {folder.images.length} {folder.images.length === 1 ? 'image' : 'images'}
-                                    </div>
-                                  </div>
+                                  Update
                                 </button>
-
-                                {confirmDeleteFolderId === folder.id ? (
-                                  <div className="flex items-center gap-1 shrink-0 bg-rose-50 border border-rose-200 rounded-lg px-1.5 py-1">
+                                {confirmDeleteOrderId === ord.id ? (
+                                  <span className="inline-flex items-center gap-1">
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        void deleteMediaFolder(folder.id);
-                                        setConfirmDeleteFolderId(null);
+                                        deleteOrder(ord.id);
+                                        setConfirmDeleteOrderId(null);
                                       }}
-                                      className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded cursor-pointer"
+                                      className="px-2 py-1 rounded bg-red-600 text-white text-xs font-medium"
                                     >
                                       Delete
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => setConfirmDeleteFolderId(null)}
-                                      className="px-1.5 py-0.5 text-slate-600 text-[10px] font-bold cursor-pointer"
+                                      onClick={() => setConfirmDeleteOrderId(null)}
+                                      className="px-2 py-1 rounded border border-slate-200 text-xs text-slate-600"
                                     >
                                       Cancel
                                     </button>
-                                  </div>
+                                  </span>
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => setConfirmDeleteFolderId(folder.id)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
-                                    title={`Delete folder "${folder.name}"`}
+                                    onClick={() => setConfirmDeleteOrderId(ord.id)}
+                                    aria-label={`Delete order ${ord.id}`}
+                                    className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
                                 )}
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Right: Active Folder Images + Add / Delete / Assign to Product */}
-                    <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-                      {!activeMediaFolder ? (
-                        <div className="p-10 text-center text-slate-500 text-xs">
-                          Select or create a folder to manage its images.
-                        </div>
-                      ) : (
-                        <>
-                          {/* Active Folder Header */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-                            <div>
-                              <h4 className="font-heading text-sm sm:text-base font-bold text-slate-950 flex items-center gap-2">
-                                <Images className="w-4 h-4 text-emerald-700" />
-                                <span>{activeMediaFolder.name}</span>
-                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                                  {activeMediaFolder.images.length} Photos
-                                </span>
-                              </h4>
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                Add single/multiple photos or a device folder into &ldquo;{activeMediaFolder.name}&rdquo;, or delete unwanted images.
-                              </p>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                              <label className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors">
-                                <Upload className="w-3.5 h-3.5 text-amber-300" />
-                                <span>{isUploadingMediaBatch ? 'Uploading...' : '+ Add Images'}</span>
-                                <input
-                                  type="file"
-                                  multiple
-                                  accept="image/*"
-                                  disabled={isUploadingMediaBatch}
-                                  onChange={(e) => void handleAddFilesToFolder(activeMediaFolder.id, e)}
-                                  className="hidden"
-                                />
-                              </label>
-
-                              <label className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 border border-slate-300 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors">
-                                <FolderOpen className="w-3.5 h-3.5 text-emerald-700" />
-                                <span>+ Add Subfolder</span>
-                                <input
-                                  type="file"
-                                  multiple
-                                  accept="image/*"
-                                  disabled={isUploadingMediaBatch}
-                                  onChange={(e) => void handleAddFilesToFolder(activeMediaFolder.id, e)}
-                                  className="hidden"
-                                  {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
-                                />
-                              </label>
-
-                              {activeMediaFolder.images.length > 0 && (
-                                confirmClearFolderId === activeMediaFolder.id ? (
-                                  <div className="inline-flex items-center gap-1 bg-amber-50 border border-amber-300 rounded-xl px-2 py-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        void clearMediaFolder(activeMediaFolder.id);
-                                        setConfirmClearFolderId(null);
-                                      }}
-                                      className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg cursor-pointer"
-                                    >
-                                      Confirm Clear
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmClearFolderId(null)}
-                                      className="px-1.5 py-0.5 text-slate-600 text-[11px] font-bold cursor-pointer"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmClearFolderId(activeMediaFolder.id)}
-                                    className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
-                                    title="Clear all images inside this folder"
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                    <span>Clear Folder</span>
-                                  </button>
-                                )
-                              )}
-
-                              {confirmDeleteFolderId === activeMediaFolder.id ? (
-                                <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-300 rounded-xl px-2 py-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      void deleteMediaFolder(activeMediaFolder.id);
-                                      setConfirmDeleteFolderId(null);
-                                    }}
-                                    className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded-lg cursor-pointer"
-                                  >
-                                    Confirm Delete
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteFolderId(null)}
-                                    className="px-1.5 py-0.5 text-slate-600 text-[11px] font-bold cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteFolderId(activeMediaFolder.id)}
-                                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
-                                  title="Delete this entire folder"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Delete Folder</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Target Product Quick-Assign Bar */}
-                          <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className="text-[11px] font-bold text-emerald-950 shrink-0">
-                                Assign Photos To Product:
-                              </span>
-                              <select
-                                value={targetProductIdForMedia}
-                                onChange={(e) => setTargetProductIdForMedia(e.target.value)}
-                                className="flex-1 min-w-0 px-2.5 py-1.5 text-xs rounded-lg border border-emerald-300 bg-white font-semibold text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
-                              >
-                                {products.map(p => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.name} (₹{p.price})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {activeMediaFolder.images.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => void handleApplyWholeFolderToTargetProduct()}
-                                className="px-3 py-1.5 bg-[#064E3B] hover:bg-[#047857] text-white text-[11px] font-bold rounded-lg cursor-pointer shrink-0 transition-colors"
-                              >
-                                Apply All {activeMediaFolder.images.length} Photos to Product
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Folder Images Grid */}
-                          {activeMediaFolder.images.length === 0 ? (
-                            <div className="p-8 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 text-center space-y-3">
-                              <ImageIcon className="w-9 h-9 text-slate-400 mx-auto" />
-                              <div>
-                                <p className="text-xs font-bold text-slate-700">This folder is empty</p>
-                                <p className="text-[11px] text-slate-500">Click &ldquo;+ Add Images&rdquo; or &ldquo;+ Add Subfolder&rdquo; above to add photos.</p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                              {activeMediaFolder.images.map(img => (
-                                <div
-                                  key={img.id}
-                                  className="rounded-xl border border-slate-200 bg-slate-50/70 p-2 flex flex-col justify-between gap-2 group hover:border-emerald-400 transition-colors"
-                                >
-                                  <div className="relative aspect-square w-full shrink-0 rounded-lg bg-white border border-slate-200 overflow-hidden">
-                                    <img
-                                      src={img.url}
-                                      alt={img.name}
-                                      onLoad={handleProductImageLoad}
-                                      onError={(e) => handleProductImageError(e)}
-                                      className="absolute inset-0 w-full h-full object-contain object-center p-2 block"
-                                    />
-                                    {confirmDeleteMediaImageId === img.id ? (
-                                      <div className="absolute inset-0 bg-slate-950/75 flex flex-col items-center justify-center gap-1.5 p-2">
-                                        <span className="text-[10px] font-bold text-white">Delete photo?</span>
-                                        <div className="flex items-center gap-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              void deleteImageFromFolder(activeMediaFolder.id, img.id);
-                                              setConfirmDeleteMediaImageId(null);
-                                            }}
-                                            className="px-2 py-0.5 bg-rose-600 text-white text-[10px] font-bold rounded cursor-pointer"
-                                          >
-                                            Delete
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => setConfirmDeleteMediaImageId(null)}
-                                            className="px-2 py-0.5 bg-white text-slate-800 text-[10px] font-bold rounded cursor-pointer"
-                                          >
-                                            Cancel
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() => setConfirmDeleteMediaImageId(img.id)}
-                                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/95 hover:bg-rose-600 text-slate-500 hover:text-white border border-slate-200 flex items-center justify-center shadow-xs cursor-pointer transition-colors"
-                                        title="Delete image from folder"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  <div className="space-y-1.5">
-                                    <p className="text-[11px] font-bold text-slate-800 truncate" title={img.name}>
-                                      {img.name}
-                                    </p>
-                                    <div className="grid grid-cols-2 gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleApplyImageToTargetProduct(img.url, 'primary')}
-                                        className="px-1.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold rounded-md cursor-pointer transition-colors"
-                                        title="Set as Primary Front Photo on selected product"
-                                      >
-                                        Primary
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleApplyImageToTargetProduct(img.url, 'gallery')}
-                                        className="px-1.5 py-1 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-bold rounded-md cursor-pointer transition-colors"
-                                        title="Add to selected product's gallery"
-                                      >
-                                        + Gallery
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {filteredOrders.length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="py-10 text-center text-sm text-slate-500">
+                              No matching orders found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-              )}
-
-            </div>
-          </div>
-        )}
-
-        {/* ---------------- ORDER STATUS & NOTE UPDATE MODAL ---------------- */}
-        {selectedOrder && (
-          <div 
-            className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
-            onClick={() => setSelectedOrder(null)}
-          >
-            <div 
-              className="bg-white rounded-2xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-heading text-lg font-bold text-slate-950">
-                    Update Order: {selectedOrder.id}
-                  </h3>
-                  <p className="text-xs text-slate-500">Customer: {selectedOrder.customerName} ({selectedOrder.phone})</p>
                 </div>
               </div>
+            )}
 
+            {/* 5. CUSTOMERS TAB */}
+            {activeTab === 'customers' && (
               <div className="space-y-4">
-                {/* Transaction Security & Reference Badge */}
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs grid grid-cols-2 gap-2">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">TRANSACTION ID</span>
-                    <span className="font-mono font-bold text-emerald-800">{selectedOrder.transactionId || `TXN-BNY-${selectedOrder.id}`}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">BANK REF / UTR</span>
-                    <span className="font-mono font-bold text-slate-800">{selectedOrder.bankRef || 'VERIFIED'}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Order Fulfillment Status:
-                  </label>
-                  <select
-                    value={newStatus}
-                    onChange={(e) => setNewStatus(e.target.value as Order['status'])}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 font-semibold focus:outline-none focus:border-emerald-600"
-                  >
-                    <option value="Processing">Processing (Under Preparation)</option>
-                    <option value="Confirmed">Confirmed (Payment Verified)</option>
-                    <option value="Shipped">Shipped (Dispatched to Courier)</option>
-                    <option value="Out for Delivery">Out for Delivery</option>
-                    <option value="Delivered">Delivered (Handed to Customer)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Courier / SpeedPost Tracking Number:
-                  </label>
+                <div className="relative max-w-sm">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    value={newTracking}
-                    onChange={(e) => setNewTracking(e.target.value)}
-                    placeholder="e.g. IND98427190IN or DTDC44920"
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 font-mono focus:outline-none focus:border-emerald-600"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    Customer can track this code in real-time under "Track Your Order".
-                  </p>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Internal Admin Note for this Order:
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={orderNoteInput}
-                    onChange={(e) => setOrderNoteInput(e.target.value)}
-                    placeholder="e.g. Paid via Google Pay. Priority delivery requested for wedding."
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Search customers by name, city, phone..."
+                    className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
                   />
                 </div>
 
-                {/* Direct WhatsApp notify link for customer */}
-                <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs">
-                  <span className="font-bold text-emerald-900 block mb-1">Customer Communication:</span>
-                  <a
-                    href={`https://wa.me/${selectedOrder.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(selectedOrder.customerName)}%2C%20your%20order%20${selectedOrder.id}%20status%20is%20now%20*${newStatus}*!%20Tracking%3A%20${encodeURIComponent(newTracking || selectedOrder.trackingNumber)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-[#128C7E] hover:underline"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>Send Status Update via WhatsApp to Customer</span>
-                  </a>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    onClick={() => setSelectedOrder(null)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveOrderStatus}
-                    className="px-5 py-2 bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer"
-                  >
-                    Save & Apply Status
-                  </button>
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
+                          <th className="py-3 px-4">Customer</th>
+                          <th className="py-3 px-4">City</th>
+                          <th className="py-3 px-4">Orders</th>
+                          <th className="py-3 px-4">Total Spend</th>
+                          <th className="py-3 px-4">Last Order</th>
+                          <th className="py-3 px-4 text-right">Contact</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {customers.map((cust) => {
+                          const cleanPhone = cust.phone.replace(/[^\d]/g, '');
+                          return (
+                            <tr key={cust.key} className="hover:bg-slate-50/70">
+                              <td className="py-3 px-4">
+                                <p className="font-medium text-slate-900">{cust.name}</p>
+                                <p className="text-xs text-slate-500">{cust.phone}</p>
+                              </td>
+                              <td className="py-3 px-4 text-slate-600">{cust.city}</td>
+                              <td className="py-3 px-4 tabular-nums text-slate-700">
+                                {cust.ordersCount}
+                              </td>
+                              <td className="py-3 px-4 font-medium text-slate-900 tabular-nums">
+                                &#8377;{cust.totalSpend.toLocaleString('en-IN')}
+                              </td>
+                              <td className="py-3 px-4 text-xs text-slate-500 tabular-nums">
+                                {cust.lastOrderDate}
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                {cleanPhone && (
+                                  <a
+                                    href={`https://wa.me/${cleanPhone}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                  >
+                                    <span>WhatsApp</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {customers.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-10 text-center text-sm text-slate-500">
+                              No customer records yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
-        )}
+        </div>
+      </div>
 
-        {/* ---------------- PRODUCT EDIT / CREATE MODAL ---------------- */}
-        {(editingProduct || isCreatingNewProduct) && (
-          <div 
-            className="fixed inset-0 z-60 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn"
-            onClick={() => {
-              setEditingProduct(null);
-              setIsCreatingNewProduct(false);
-            }}
+      {/* ==================== PRODUCT & PHOTO EDITOR SUB-MODAL ==================== */}
+      {editingProduct && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4">
+          <form
+            onSubmit={handleSaveProductModal}
+            className="w-full max-w-5xl h-full sm:h-auto sm:max-h-[90vh] bg-white sm:rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col"
           >
-            <div 
-              className="bg-white rounded-3xl max-w-4xl w-full p-6 sm:p-8 border border-slate-200 shadow-2xl relative max-h-[92vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Close Button */}
-              <button
-                onClick={() => {
-                  setEditingProduct(null);
-                  setIsCreatingNewProduct(false);
-                }}
-                className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
-                title="Close Form"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              {/* Modal Header with Quick Product Switcher */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-200">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-800 flex items-center justify-center shrink-0 border border-emerald-200 shadow-xs">
-                    {isCreatingNewProduct ? <Plus className="w-6 h-6 stroke-[2.5]" /> : <Edit2 className="w-6 h-6" />}
-                  </div>
-                  <div>
-                    <h3 className="font-heading text-xl sm:text-2xl font-bold text-slate-950 leading-tight">
-                      {isCreatingNewProduct ? '＋ Add New Product to Store Catalog' : `Modify: ${productForm.name || editingProduct?.name}`}
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Edit selling rates, primary front image, secondary side phase images, and package weights.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Quick Product Switcher Dropdown in Modal Header */}
-                {!isCreatingNewProduct && (
-                  <div className="flex items-center gap-2 self-start sm:self-center">
-                    <span className="text-xs font-bold text-slate-600 shrink-0">Switch Product:</span>
-                    <select
-                      value={editingProduct?.id || ''}
-                      onChange={(e) => {
-                        const targetProd = products.find(p => p.id === e.target.value);
-                        if (targetProd) handleStartEditProduct(targetProd);
-                      }}
-                      className="px-3 py-1.5 text-xs rounded-xl border border-emerald-300 bg-white font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer shadow-2xs"
-                    >
-                      {products.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} — ₹{p.price}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+            {/* Editor Header */}
+            <div className="h-14 shrink-0 px-5 border-b border-slate-200 flex items-center justify-between gap-3 bg-white">
+              <div className="flex items-center gap-3 min-w-0">
+                <h2 className="text-base font-semibold text-slate-900 truncate">
+                  {isAddingProduct ? 'Add New Product' : 'Edit Product & Photos'}
+                </h2>
+                {!isAddingProduct && products.length > 1 && (
+                  <select
+                    value={editingProduct.id}
+                    onChange={(e) => {
+                      const next = products.find((p) => p.id === e.target.value);
+                      if (next) openEditProductModal(next);
+                    }}
+                    className="hidden sm:block h-8 px-2.5 rounded-md border border-slate-200 text-xs text-slate-700 bg-slate-50 max-w-[210px]"
+                  >
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
                 )}
               </div>
 
-              {/* Main 2-Column Split: Form (Left) & Live Preview (Right) */}
-              <form onSubmit={handleSaveProduct} noValidate className="space-y-6">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                  
-                  {/* Left Form Controls (7 Cols) */}
-                  <div className="lg:col-span-7 space-y-5">
-                    
-                    {/* Section 1: Pricing & Rates (Top Priority) */}
-                    <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200/80 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
-                          <DollarSign className="w-3.5 h-3.5 text-amber-700" />
-                          Rate & Pricing Configuration
-                        </span>
-                        <span className="text-[10px] bg-amber-200/70 text-amber-900 font-bold px-2 py-0.5 rounded">
-                          Store Selling Rates
-                        </span>
-                      </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingProduct(null);
+                  setIsAddingProduct(false);
+                }}
+                aria-label="Close editor"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        <div>
-                          <label className="text-xs font-bold text-slate-800 block mb-1">
-                            Customer Rate (₹)*:
-                          </label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-500">₹</span>
-                            <input
-                              type="number"
-                              step="any"
-                              value={productForm.price ?? ''}
-                              onChange={(e) => setProductForm({ ...productForm, price: e.target.value === '' ? undefined : Number(e.target.value) })}
-                              placeholder="e.g. 300"
-                              className="w-full pl-7 pr-3 py-2 text-sm rounded-xl border border-amber-300 bg-white font-extrabold text-slate-950 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                            />
-                          </div>
-                        </div>
+            {/* Editor Body: 2-Column Split */}
+            <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12">
+              {/* Left Form Fields */}
+              <div className="lg:col-span-7 p-5 sm:p-6 space-y-6 border-b lg:border-b-0 lg:border-r border-slate-200">
+                {/* SECTION 1: PHOTOS */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-slate-900">1. Product Photos</h3>
+                    <span className="text-xs font-mono tabular-nums text-slate-500">
+                      {Math.round(galleryBytes / 1024)} KB / {Math.round(MAX_PRODUCT_GALLERY_BYTES / 1024)} KB
+                    </span>
+                  </div>
 
-                        <div>
-                          <label className="text-xs font-bold text-slate-800 block mb-1">
-                            MRP / Original (₹):
-                          </label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">₹</span>
-                            <input
-                              type="number"
-                              step="any"
-                              value={productForm.originalPrice ?? ''}
-                              onChange={(e) => setProductForm({ ...productForm, originalPrice: e.target.value === '' ? undefined : Number(e.target.value) })}
-                              placeholder="e.g. 380"
-                              className="w-full pl-7 pr-3 py-2 text-sm rounded-xl border border-slate-300 bg-white font-bold text-slate-600 focus:outline-none focus:border-emerald-600"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="col-span-2 sm:col-span-1">
-                          <label className="text-xs font-bold text-slate-800 block mb-1">
-                            Default Weight:
-                          </label>
-                          <input
-                            type="text"
-                            value={productForm.defaultWeight || ''}
-                            onChange={(e) => setProductForm({ ...productForm, defaultWeight: e.target.value })}
-                            placeholder="500g / 250g / 1kg"
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-white font-semibold focus:outline-none focus:border-emerald-600"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                          Available Package Sizes (comma-separated):
-                        </label>
+                  {/* Main Photo Row */}
+                  <div className="flex items-start gap-4">
+                    <img
+                      src={editingProduct.image}
+                      alt={editingProduct.name || 'Product preview'}
+                      onLoad={handleProductImageLoad}
+                      onError={(e) => handleProductImageError(e, editingProduct)}
+                      className="w-20 h-20 rounded-lg object-contain bg-slate-50 border border-slate-200 p-1 shrink-0"
+                    />
+                    <div className="flex-1 space-y-2.5 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
                         <input
-                          type="text"
-                          value={Array.isArray(productForm.weightOptions) ? productForm.weightOptions.join(', ') : (productForm.weightOptions || '')}
-                          onChange={(e) => setProductForm({ ...productForm, weightOptions: e.target.value as any })}
-                          placeholder="e.g. 250g, 500g, 1kg"
-                          className="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-300 bg-white font-medium focus:outline-none focus:border-emerald-600"
+                          ref={primaryUploadRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => void handlePrimaryPhotoUpload(e.target.files)}
                         />
-                      </div>
-                    </div>
-
-                    {/* Section 2: PRIMARY & SECONDARY MULTI-PHASE IMAGERY */}
-                    <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                          <ImageIcon className="w-3.5 h-3.5 text-emerald-700" />
-                          Primary &amp; Secondary Store Imagery (Multi-Angle)
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                            {(productForm.gallery?.length) || (productForm.image ? 1 : 0)} Photos Active
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setProductForm(prev => ({ ...prev, image: '', gallery: [] }));
-                              setActivePreviewIdx(0);
-                              showToast('Gallery Cleared', 'All product images cleared. Upload new photos or pick from Image Folders.', 'info');
-                            }}
-                            className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 cursor-pointer flex items-center gap-1"
-                            title="Clear all product images"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Clear All Photos</span>
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-slate-500">
-                        In the customer storefront, every section has more than 3 related images (Front packaging, Side phase, Back label/ingredients, and Texture). Manage each view below:
-                      </p>
-
-                      {/* --- A. PRIMARY IMAGE (Front View / Main Cover) --- */}
-                      <div className="bg-white p-4 rounded-xl border-2 border-emerald-600/30 shadow-xs space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full bg-[#064E3B] text-white text-[10px] font-extrabold flex items-center justify-center">
-                              1
-                            </span>
-                            <span className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
-                              Primary Image (Main Front View / Catalog Cover)
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-700 text-white">
-                              Front Phase
-                            </span>
-                            {productForm.image && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setProductForm(prev => {
-                                    const remaining = (prev.gallery || []).slice(1);
-                                    return {
-                                      ...prev,
-                                      image: remaining[0] || '',
-                                      gallery: remaining
-                                    };
-                                  });
-                                  setActivePreviewIdx(0);
-                                  showToast('Primary Image Cleared', 'Primary photo removed.', 'info');
-                                }}
-                                className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 cursor-pointer flex items-center gap-1"
-                                title="Clear primary image"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>Clear</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row items-center gap-3">
-                          <div className="w-20 h-20 rounded-xl bg-slate-50 p-1 shrink-0 flex items-center justify-center overflow-hidden border border-slate-200">
-                            {productForm.image ? (
-                              <img
-                                src={productForm.image}
-                                alt="Primary Front"
-                                onLoad={handleProductImageLoad}
-                                onError={(e) => handleProductImageError(e, editingProduct)}
-                                className="w-full h-full object-contain"
-                              />
-                            ) : (
-                              <ImageIcon className="w-6 h-6 text-slate-300" />
-                            )}
-                          </div>
-
-                          <div className="flex-1 space-y-2 w-full">
-                            {/* Device Upload for Primary */}
-                            <label className="flex items-center justify-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl cursor-pointer font-bold text-xs transition-colors shadow-xs w-full">
-                              <Upload className="w-3.5 h-3.5 text-amber-300" />
-                              <span>Upload Primary Image from Device</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleUploadPrimaryImage}
-                                className="hidden"
-                              />
-                            </label>
-
-                            <div className="relative">
-                              <input
-                                type="text"
-                                value={productForm.image || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setProductForm(prev => {
-                                    const g = prev.gallery && prev.gallery.length > 0 ? [...prev.gallery] : [val];
-                                    g[0] = val;
-                                    return { ...prev, image: val, gallery: g };
-                                  });
-                                }}
-                                placeholder="Primary image path / URL (/images/banaya_honey.jpg)"
-                                className="w-full px-2.5 py-1 text-[11px] font-mono rounded-lg border border-slate-300 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* --- B. SECONDARY IMAGES (Side Phase, Back Packaging, Ingredients & Texture) --- */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between pt-1">
-                          <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                            <Layers className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Secondary Images (Side Phase, Back Packaging & Detail Shots)</span>
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => handleAddSecondarySlot()}
-                            className="text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition-colors cursor-pointer flex items-center gap-1"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Add Secondary Slot</span>
-                          </button>
-                        </div>
-
-                        {/* List of Secondary Slots */}
-                        {((productForm.gallery || []).slice(1)).length === 0 ? (
-                          <div className="p-4 rounded-xl border border-dashed border-slate-300 text-center bg-white">
-                            <p className="text-xs text-slate-500 mb-2">
-                              No secondary side phase images configured yet. Click below to add side angle, back packaging, or nutrition facts photos.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => handleAddSecondarySlot('/images/pure-honey-2.png')}
-                              className="px-3 py-1.5 bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Add Side Phase Image</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {((productForm.gallery || []).slice(1)).map((secImg, secIdx) => {
-                              const slotNumber = secIdx + 2;
-                              const defaultAngleLabel = secIdx === 0 
-                                ? 'Side Phase / Packaging Angle' 
-                                : secIdx === 1 
-                                  ? 'Back Packaging & Ingredients' 
-                                  : secIdx === 2 
-                                    ? 'Texture / Macro Shot' 
-                                    : `Detail Angle #${secIdx + 1}`;
-
-                              return (
-                                <div key={secIdx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-2">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-4.5 h-4.5 rounded-full bg-slate-700 text-white text-[10px] font-bold flex items-center justify-center">
-                                        {slotNumber}
-                                      </span>
-                                      <span className="text-xs font-bold text-slate-800">
-                                        Secondary Image #{secIdx + 1}: <span className="text-emerald-800 font-semibold">{defaultAngleLabel}</span>
-                                      </span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => handlePromoteToPrimary(secIdx)}
-                                        className="text-[10px] font-bold text-emerald-700 hover:bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 cursor-pointer"
-                                        title="Make this the front main image"
-                                      >
-                                        Set as Primary Front
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveSecondaryImage(secIdx)}
-                                        className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 cursor-pointer transition-colors"
-                                        title="Remove this secondary image"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-col sm:flex-row items-center gap-2.5">
-                                    <div 
-                                      onClick={() => setActivePreviewIdx(secIdx + 1)}
-                                      className="w-16 h-16 rounded-lg bg-slate-50 p-1 shrink-0 flex items-center justify-center overflow-hidden border border-slate-200 cursor-pointer hover:border-emerald-500"
-                                      title="Click to preview on storefront card"
-                                    >
-                                      <img
-                                        src={secImg}
-                                        alt={`Secondary ${secIdx + 1}`}
-                                        onLoad={handleProductImageLoad}
-                                        onError={(e) => handleProductImageError(e, editingProduct)}
-                                        className="w-full h-full object-contain"
-                                      />
-                                    </div>
-
-                                    <div className="flex-1 space-y-1.5 w-full">
-                                      {/* Device Upload for this specific secondary slot */}
-                                      <label className="flex items-center justify-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 border border-slate-200 hover:border-emerald-300 rounded-lg cursor-pointer font-bold text-xs transition-colors w-full">
-                                        <Camera className="w-3 h-3 text-emerald-700" />
-                                        <span>Upload Side Phase Photo from Device</span>
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          onChange={(e) => handleUploadSecondaryImage(secIdx, e)}
-                                          className="hidden"
-                                        />
-                                      </label>
-
-                                      <input
-                                        type="text"
-                                        value={secImg}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          setProductForm(prev => {
-                                            const g = [...(prev.gallery || [prev.image || '/images/banaya_honey.jpg'])];
-                                            g[secIdx + 1] = val;
-                                            return { ...prev, gallery: g };
-                                          });
-                                        }}
-                                        placeholder="Secondary image path or URL"
-                                        className="w-full px-2.5 py-1 text-[11px] font-mono rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-600"
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAddSecondarySlot()}
-                            className="w-full py-2 bg-white hover:bg-emerald-50 text-emerald-800 border-2 border-dashed border-emerald-300 hover:border-emerald-500 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                          >
-                            <Plus className="w-4 h-4 text-emerald-700" />
-                            <span>Add Secondary Image Slot</span>
-                          </button>
-
-                          <label className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-2 border-dashed border-emerald-400 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
-                            <FolderOpen className="w-4 h-4 text-emerald-700" />
-                            <span>{isUploadingImage ? 'Uploading Folder...' : 'Upload Image Folder to Gallery'}</span>
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              disabled={isUploadingImage}
-                              onChange={(e) => void handleUploadFolderToProductForm(e)}
-                              className="hidden"
-                              {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
-                            />
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* --- C. IMAGE FOLDERS PICKER (ADD / PICK / DELETE) --- */}
-                      <div className="pt-3 border-t border-slate-200 space-y-2.5">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
-                            <FolderOpen className="w-3.5 h-3.5 text-emerald-700" />
-                            <span>Image Folders Library (Pick, Add Photos/Folder, or Delete):</span>
-                          </span>
-
-                          {pickerFolderId !== 'all' && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <label className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold rounded-lg cursor-pointer inline-flex items-center gap-1">
-                                <Upload className="w-3 h-3" />
-                                <span>+ Add Photos</span>
-                                <input
-                                  type="file"
-                                  multiple
-                                  accept="image/*"
-                                  onChange={(e) => void handleAddFilesToFolder(pickerFolderId, e)}
-                                  className="hidden"
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const folder = mediaFolders.find(f => f.id === pickerFolderId);
-                                  if (folder && folder.images.length > 0) {
-                                    const urls = folder.images.map(i => i.url);
-                                    setProductForm(prev => ({
-                                      ...prev,
-                                      image: urls[0],
-                                      gallery: urls
-                                    }));
-                                    setActivePreviewIdx(0);
-                                    showToast('Folder Applied', `Loaded ${urls.length} photos from "${folder.name}".`, 'success', urls[0]);
-                                  }
-                                }}
-                                className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-[10px] font-bold rounded-lg cursor-pointer"
-                              >
-                                Apply Whole Folder
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void clearMediaFolder(pickerFolderId)}
-                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold rounded-lg cursor-pointer"
-                                title="Clear all images in this folder"
-                              >
-                                Clear Folder
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void deleteMediaFolder(pickerFolderId);
-                                  setPickerFolderId('all');
-                                }}
-                                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold rounded-lg cursor-pointer inline-flex items-center gap-1"
-                                title="Delete this entire folder"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                <span>Delete Folder</span>
-                              </button>
-                            </div>
+                        <button
+                          type="button"
+                          disabled={isUploadingImage}
+                          onClick={() => primaryUploadRef.current?.click()}
+                          className="h-8 px-3 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {isUploadingImage ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="w-3.5 h-3.5" />
                           )}
-                        </div>
+                          <span>Upload Main Photo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowFolderPicker((v) => !v)}
+                          className="h-8 px-3 rounded-md border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
+                          <span>{showFolderPicker ? 'Hide Folders' : 'Choose from Folders'}</span>
+                        </button>
+                      </div>
 
-                        {/* Folder Filter Tabs + Inline Create Folder */}
-                        <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={editingProduct.image}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            image: e.target.value,
+                            gallery: [
+                              e.target.value,
+                              ...(editingProduct.gallery || []).filter((g) => g !== editingProduct.image)
+                            ]
+                          })
+                        }
+                        placeholder="Image path or URL (e.g. /images/malai-thean-1.webp)"
+                        className="w-full h-8 px-2.5 rounded-md border border-slate-200 text-xs font-mono text-slate-700 focus:outline-none focus:border-slate-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Inline Folder Picker */}
+                  {showFolderPicker && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-3">
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        {mediaFolders.map((f) => (
                           <button
+                            key={f.id}
                             type="button"
-                            onClick={() => setPickerFolderId('all')}
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border cursor-pointer transition-colors ${
-                              pickerFolderId === 'all'
-                                ? 'bg-[#064E3B] text-white border-[#064E3B]'
-                                : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300'
+                            onClick={() => setPickerFolderId(f.id)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap cursor-pointer ${
+                              pickerFolder?.id === f.id
+                                ? 'bg-[#1B3624] text-white'
+                                : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
                             }`}
                           >
-                            All Folders ({mediaFolders.reduce((sum, f) => sum + f.images.length, 0)})
+                            {f.name} ({f.images.length})
                           </button>
-
-                          {mediaFolders.map(folder => (
-                            <div key={folder.id} className="inline-flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                onClick={() => setPickerFolderId(folder.id)}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border cursor-pointer transition-colors ${
-                                  pickerFolderId === folder.id
-                                    ? 'bg-[#064E3B] text-white border-[#064E3B]'
-                                    : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300'
-                                }`}
-                              >
-                                {folder.name} ({folder.images.length})
-                              </button>
-                              {pickerFolderId === folder.id && (
+                        ))}
+                      </div>
+                      {pickerFolder && pickerFolder.images.length > 0 ? (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+                          {pickerFolder.images.map((img) => (
+                            <div
+                              key={img.id}
+                              className="rounded border border-slate-200 bg-white p-1.5 space-y-1.5"
+                            >
+                              <img
+                                src={img.url}
+                                alt={img.name}
+                                className="w-full h-16 object-contain bg-slate-50 rounded"
+                              />
+                              <div className="grid grid-cols-2 gap-1">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    void deleteMediaFolder(folder.id);
-                                    setPickerFolderId('all');
-                                  }}
-                                  className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded cursor-pointer"
-                                  title={`Delete folder "${folder.name}"`}
+                                  onClick={() => handlePickFolderPhoto(img.url, true)}
+                                  className="py-0.5 rounded bg-[#1B3624] text-white text-[10px] font-medium"
                                 >
-                                  <Trash2 className="w-3 h-3" />
+                                  Main
                                 </button>
-                              )}
+                                <button
+                                  type="button"
+                                  onClick={() => handlePickFolderPhoto(img.url, false)}
+                                  className="py-0.5 rounded border border-slate-200 text-slate-700 text-[10px] font-medium"
+                                >
+                                  + Gallery
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
-
-                        {/* Quick Inline New Folder Input inside Modal */}
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={modalNewFolderName}
-                            onChange={(e) => setModalNewFolderName(e.target.value)}
-                            placeholder="New folder name..."
-                            className="flex-1 px-2.5 py-1 text-[11px] rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-emerald-600"
-                          />
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (!modalNewFolderName.trim()) return;
-                              const created = await createMediaFolder(modalNewFolderName);
-                              if (created) {
-                                setPickerFolderId(created.id);
-                                setModalNewFolderName('');
-                              }
-                            }}
-                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white text-[10px] font-bold rounded-lg cursor-pointer inline-flex items-center gap-1 shrink-0"
-                          >
-                            <FolderPlus className="w-3 h-3" />
-                            <span>+ Folder</span>
-                          </button>
-                        </div>
-
-                        {/* Folder Image Grid with Pick & Delete */}
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-44 overflow-y-auto p-1.5 bg-white rounded-xl border border-slate-200">
-                          {mediaFolders
-                            .filter(f => pickerFolderId === 'all' || f.id === pickerFolderId)
-                            .flatMap(f => f.images.map(img => ({ folder: f, img })))
-                            .map(({ folder, img }) => (
-                              <div
-                                key={`${folder.id}-${img.id}`}
-                                className="p-1.5 rounded-lg border border-slate-200 hover:border-emerald-400 bg-slate-50/50 hover:bg-emerald-50/50 transition-all flex items-center justify-between gap-1.5 group"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!productForm.image) {
-                                      setProductForm(prev => ({
-                                        ...prev,
-                                        image: img.url,
-                                        gallery: Array.from(new Set([img.url, ...(prev.gallery || []).filter(Boolean)]))
-                                      }));
-                                    } else {
-                                      handleAddSecondarySlot(img.url);
-                                    }
-                                  }}
-                                  className="flex items-center gap-1.5 flex-1 min-w-0 text-left cursor-pointer"
-                                  title="Click to add image to this product"
-                                >
-                                  <img
-                                    src={img.url}
-                                    alt={img.name}
-                                    onLoad={handleProductImageLoad}
-                                    onError={(e) => handleProductImageError(e)}
-                                    className="w-7 h-7 rounded object-contain bg-white shrink-0 border border-slate-200"
-                                  />
-                                  <div className="truncate">
-                                    <span className="text-[10px] font-bold text-slate-800 block truncate">
-                                      {img.name}
-                                    </span>
-                                    <span className="text-[9px] text-emerald-700 font-semibold block leading-tight truncate">
-                                      {folder.name}
-                                    </span>
-                                  </div>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => void deleteImageFromFolder(folder.id, img.id)}
-                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer shrink-0 transition-colors"
-                                  title={`Delete "${img.name}" from folder`}
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 py-2">
+                          No images inside this folder yet.
+                        </p>
+                      )}
                     </div>
+                  )}
 
-                    {/* Section 3: Identity & Sourcing */}
-                    <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3">
-                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                        <Package className="w-3.5 h-3.5 text-emerald-700" />
-                        Product Name & Category
+                  {/* Gallery Photos Grid */}
+                  <div className="space-y-2.5 pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-600">
+                        Gallery Photos ({editingGallery.length}/8)
                       </span>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Product Name (English)*:
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={productForm.name || ''}
-                            onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                            placeholder="e.g. Pure Wildflower Honey"
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600 font-semibold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Tamil Name (தமிழ் பெயர்):
-                          </label>
-                          <input
-                            type="text"
-                            value={productForm.tamilName || ''}
-                            onChange={(e) => setProductForm({ ...productForm, tamilName: e.target.value })}
-                            placeholder="e.g. சுத்தமான மலைத்தேன்"
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Store Category:
-                          </label>
-                          <select
-                            value={productForm.categorySlug || 'traditional-wellness'}
-                            onChange={(e) => {
-                              const sel = CATEGORIES.find(c => c.slug === e.target.value);
-                              setProductForm({
-                                ...productForm,
-                                categorySlug: e.target.value,
-                                category: sel ? sel.name : 'Traditional Wellness'
-                              });
-                            }}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-white font-medium focus:outline-none focus:border-emerald-600"
-                          >
-                            {CATEGORIES.map(c => (
-                              <option key={c.id} value={c.slug}>{c.name}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Stock Status:
-                          </label>
-                          <select
-                            value={productForm.inStock ? 'true' : 'false'}
-                            onChange={(e) => setProductForm({ ...productForm, inStock: e.target.value === 'true' })}
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 bg-white font-medium focus:outline-none focus:border-emerald-600"
-                          >
-                            <option value="true">In Stock (Available for Purchase)</option>
-                            <option value="false">Out of Stock (Disabled)</option>
-                          </select>
-                        </div>
-                      </div>
-
                       <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1">
-                          Tagline / Subheading:
-                        </label>
                         <input
-                          type="text"
-                          value={productForm.tagline || ''}
-                          onChange={(e) => setProductForm({ ...productForm, tagline: e.target.value })}
-                          placeholder="Short marketing catchphrase"
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
+                          ref={multiGalleryUploadRef}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => void handleMultipleGalleryUpload(e.target.files)}
                         />
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-4 pt-1">
-                        <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={!!productForm.isBestSeller}
-                            onChange={(e) => setProductForm({ ...productForm, isBestSeller: e.target.checked })}
-                            className="w-4 h-4 accent-[#064E3B] rounded cursor-pointer"
-                          />
-                          <span>Feature on Storefront (Best Seller)</span>
-                        </label>
-
-                        <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={!!productForm.isNew}
-                            onChange={(e) => setProductForm({ ...productForm, isNew: e.target.checked })}
-                            className="w-4 h-4 accent-[#064E3B] rounded cursor-pointer"
-                          />
-                          <span>Highlight as New Launch</span>
-                        </label>
+                        <button
+                          type="button"
+                          disabled={isUploadingImage}
+                          onClick={() => multiGalleryUploadRef.current?.click()}
+                          className="h-7 px-2.5 rounded border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <ImagePlus className="w-3.5 h-3.5" />
+                          <span>Add Gallery Photos</span>
+                        </button>
                       </div>
                     </div>
 
-                    {/* Section 4: Details, Ingredients & How to Use */}
-                    <div className="bg-white p-4 rounded-2xl border border-slate-200 space-y-3">
-                      <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-                        Description, Benefits & Usage Instructions
-                      </span>
-
-                      <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1">
-                          Product Description:
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={productForm.description || ''}
-                          onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
-                          placeholder="Authentic botanical sourcing and heritage recipe."
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Key Benefits (comma-separated):
-                          </label>
-                          <input
-                            type="text"
-                            value={Array.isArray(productForm.keyBenefits) ? productForm.keyBenefits.join(', ') : (productForm.keyBenefits || '')}
-                            onChange={(e) => setProductForm({ ...productForm, keyBenefits: e.target.value as any })}
-                            placeholder="Boosts immunity, 100% Raw, Zero chemicals"
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-xs font-bold text-slate-700 block mb-1">
-                            Badges (comma-separated):
-                          </label>
-                          <input
-                            type="text"
-                            value={Array.isArray(productForm.badges) ? productForm.badges.join(', ') : (productForm.badges || '')}
-                            onChange={(e) => setProductForm({ ...productForm, badges: e.target.value as any })}
-                            placeholder="100% Pure, Wild Harvest, Best Seller"
-                            className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1">
-                          How To Use & Dosage:
-                        </label>
-                        <input
-                          type="text"
-                          value={productForm.howToUse || ''}
-                          onChange={(e) => setProductForm({ ...productForm, howToUse: e.target.value })}
-                          placeholder="Consume 1 teaspoon daily with warm water or milk."
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:border-emerald-600"
-                        />
-                      </div>
-                    </div>
-
-                  </div>
-
-                  {/* Right Column: Live Customer Storefront Card Preview (5 Cols) */}
-                  <div className="lg:col-span-5 sticky top-2 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
-                        <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                        Live Customer Website View
-                      </span>
-                      <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        Exact Store Rendering
-                      </span>
-                    </div>
-
-                    {(() => {
-                      const galleryList = productForm.gallery && productForm.gallery.length > 0 
-                        ? productForm.gallery 
-                        : [productForm.image || '/images/banaya_honey.jpg'];
-                      const activeImage = galleryList[activePreviewIdx] || galleryList[0] || '/images/banaya_honey.jpg';
-                      const badgesList = Array.isArray(productForm.badges) 
-                        ? productForm.badges 
-                        : (typeof productForm.badges === 'string' ? (productForm.badges as string).split(',').map(s => s.trim()) : ['100% Pure']);
-
-                      return (
-                        <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xl text-left space-y-3 relative overflow-hidden">
-                          {/* Active Image Frame with Navigation Arrows */}
-                          <div className="relative aspect-square w-full shrink-0 rounded-2xl overflow-hidden bg-white border border-slate-200 group">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {editingGallery.map((url, idx) => (
+                        <div
+                          key={`${url.slice(0, 32)}-${idx}`}
+                          className={`rounded-lg border p-2 space-y-2 bg-white ${
+                            idx === 0 ? 'border-[#1B3624]' : 'border-slate-200'
+                          }`}
+                        >
+                          <div className="relative aspect-square bg-slate-50 rounded overflow-hidden flex items-center justify-center">
                             <img
-                              src={activeImage}
-                              alt={productForm.name || 'Product Preview'}
-                              onLoad={handleProductImageLoad}
-                              onError={(e) => handleProductImageError(e, editingProduct)}
-                              className="absolute inset-0 w-full h-full object-contain object-center p-3 block"
+                              src={url}
+                              alt={`Gallery ${idx + 1}`}
+                              className="w-full h-full object-contain p-1"
                             />
-
-                            {/* Left/Right arrow navigation */}
-                            {galleryList.length > 1 && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => setActivePreviewIdx(prev => (prev === 0 ? galleryList.length - 1 : prev - 1))}
-                                  className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/90 hover:bg-white text-slate-800 flex items-center justify-center shadow-md cursor-pointer border border-slate-200"
-                                >
-                                  <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setActivePreviewIdx(prev => (prev === galleryList.length - 1 ? 0 : prev + 1))}
-                                  className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-white/90 hover:bg-white text-slate-800 flex items-center justify-center shadow-md cursor-pointer border border-slate-200"
-                                >
-                                  <ChevronRight className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-
-                            {/* Badges Preview */}
-                            <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 items-start">
-                              {badgesList.slice(0, 2).map((b, i) => (
-                                <span key={i} className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#064E3B] text-white shadow-xs">
-                                  {b}
-                                </span>
-                              ))}
-                              {productForm.isBestSeller && (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-400 text-slate-950">
-                                  Best Seller
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Image Angle Indicator Pill */}
-                            <span className="absolute bottom-2.5 left-2.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-900/80 text-white backdrop-blur-xs">
-                              {activePreviewIdx === 0 ? '📷 Primary Front' : `📐 Secondary Angle #${activePreviewIdx}`} ({activePreviewIdx + 1}/{galleryList.length})
-                            </span>
-
-                            {/* Stock pill */}
-                            <span className={`absolute bottom-2.5 right-2.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              productForm.inStock !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                            }`}>
-                              {productForm.inStock !== false ? 'In Stock' : 'Out of Stock'}
+                            <span
+                              className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                idx === 0
+                                  ? 'bg-[#1B3624] text-white'
+                                  : 'bg-white/90 border border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              {idx === 0 ? 'Main' : `#${idx + 1}`}
                             </span>
                           </div>
 
-                          {/* Thumbnails Navigation Row (Primary + Secondary) */}
-                          <div className="flex gap-2 overflow-x-auto pb-1">
-                            {galleryList.map((imgItem, idx) => (
+                          <div className="flex items-center justify-between gap-1">
+                            <div className="flex items-center gap-0.5">
                               <button
-                                key={idx}
                                 type="button"
-                                onClick={() => setActivePreviewIdx(idx)}
-                                className={`relative w-14 h-14 rounded-xl overflow-hidden shrink-0 border-2 transition-all cursor-pointer flex items-center justify-center bg-slate-50 p-1 ${
-                                  activePreviewIdx === idx
-                                    ? 'border-emerald-600 ring-2 ring-emerald-500/20'
-                                    : 'border-slate-200 opacity-60 hover:opacity-100'
-                                }`}
+                                disabled={idx === 0}
+                                onClick={() => handleMoveGalleryPhoto(idx, -1)}
+                                className="p-1 rounded border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-50"
+                                title="Move left"
                               >
-                                <img
-                                  src={imgItem}
-                                  alt=""
-                                  onLoad={handleProductImageLoad}
-                                  onError={(e) => handleProductImageError(e, editingProduct)}
-                                  className="w-full h-full object-contain"
-                                />
-                                <span className="absolute bottom-0.5 right-0.5 text-[8px] font-bold px-1 rounded bg-slate-900/85 text-white">
-                                  {idx === 0 ? 'P' : `S${idx}`}
-                                </span>
+                                <ChevronLeft className="w-3 h-3" />
                               </button>
-                            ))}
-                          </div>
-
-                          {/* Title & Category */}
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                              {productForm.category || 'Traditional Wellness'}
-                            </span>
-                            <h4 className="font-heading font-extrabold text-base text-slate-900 leading-snug">
-                              {productForm.name || 'Product Title'}
-                            </h4>
-                            {productForm.tamilName && (
-                              <span className="text-xs font-medium text-emerald-800 block">
-                                {productForm.tamilName}
-                              </span>
-                            )}
-                            <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
-                              {productForm.tagline || '100% Pure Botanical Specialty'}
-                            </p>
-                          </div>
-
-                          {/* Weight Selector Preview */}
-                          <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                            <span className="text-[10px] text-slate-400 font-semibold">Available Sizes:</span>
-                            {(Array.isArray(productForm.weightOptions) 
-                              ? productForm.weightOptions 
-                              : (typeof productForm.weightOptions === 'string' ? (productForm.weightOptions as string).split(',').map(s => s.trim()) : ['500g'])
-                            ).map((w, wi) => (
-                              <span 
-                                key={wi}
-                                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
-                                  w === productForm.defaultWeight
-                                    ? 'bg-emerald-700 text-white'
-                                    : 'bg-slate-100 text-slate-700 border border-slate-200'
-                                }`}
+                              <button
+                                type="button"
+                                disabled={idx === editingGallery.length - 1}
+                                onClick={() => handleMoveGalleryPhoto(idx, 1)}
+                                className="p-1 rounded border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-50"
+                                title="Move right"
                               >
-                                {w}
-                              </span>
-                            ))}
-                          </div>
-
-                          {/* Pricing Preview with Discount */}
-                          <div className="pt-2 border-t border-slate-100 flex items-baseline justify-between">
-                            <div>
-                              <span className="text-2xl font-heading font-extrabold text-slate-900">
-                                ₹{productForm.price || 0}
-                              </span>
-                              {productForm.originalPrice && productForm.originalPrice > (productForm.price || 0) && (
-                                <>
-                                  <span className="text-xs text-slate-400 line-through ml-2">
-                                    ₹{productForm.originalPrice}
-                                  </span>
-                                  <span className="text-[11px] text-emerald-700 font-bold ml-2">
-                                    {Math.round(((productForm.originalPrice - (productForm.price || 0)) / productForm.originalPrice) * 100)}% OFF
-                                  </span>
-                                </>
-                              )}
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
                             </div>
 
-                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                              ★ 4.9 (Live Store)
-                            </span>
+                            {idx > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSetMainGalleryPhoto(url)}
+                                className="text-[11px] font-medium text-[#1B3624] hover:underline"
+                              >
+                                Make Main
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">Primary</span>
+                            )}
                           </div>
 
-                          {/* Add to bag button preview */}
-                          <div className="w-full py-2.5 rounded-xl bg-[#064E3B] text-white font-bold text-xs text-center flex items-center justify-center gap-1.5 shadow-xs opacity-90">
-                            <ShoppingBag className="w-3.5 h-3.5 text-amber-300" />
-                            <span>Add To Bag</span>
-                          </div>
-
-                          <p className="text-[10px] text-slate-400 text-center">
-                            Live preview: this is exactly what customers see when browsing and ordering.
-                          </p>
+                          {editingGallery.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveGalleryPhoto(url)}
+                              className="w-full py-1 rounded border border-slate-200 text-[11px] text-red-600 hover:bg-red-50"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </div>
-                      );
-                    })()}
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                {/* SECTION 2: PRICING & INVENTORY */}
+                <section className="space-y-4 pt-5 border-t border-slate-200">
+                  <h3 className="text-sm font-semibold text-slate-900">2. Pricing &amp; Stock</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Selling Price (&#8377;)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        required
+                        value={editingProduct.price}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            price: Number(e.target.value)
+                          })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm font-mono tabular-nums text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Original MRP (&#8377;)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        required
+                        value={editingProduct.originalPrice}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            originalPrice: Number(e.target.value)
+                          })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm font-mono tabular-nums text-slate-900"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Default Pack
+                      </label>
+                      <input
+                        type="text"
+                        value={editingProduct.defaultWeight}
+                        onChange={(e) =>
+                          setEditingProduct({
+                            ...editingProduct,
+                            defaultWeight: e.target.value
+                          })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                      />
+                    </div>
                   </div>
 
-                </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Available Pack Weights (comma separated)
+                    </label>
+                    <input
+                      type="text"
+                      value={editingProduct.weightOptions.join(', ')}
+                      onChange={(e) => {
+                        const opts = e.target.value
+                          .split(',')
+                          .map((s) => s.trim())
+                          .filter(Boolean);
+                        setEditingProduct({
+                          ...editingProduct,
+                          weightOptions: opts.length > 0 ? opts : ['500g']
+                        });
+                      }}
+                      placeholder="250g, 500g, 1kg"
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                    />
+                  </div>
 
-                {/* Form Bottom Actions */}
-                <div className="flex items-center justify-between pt-5 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingProduct(null);
-                      setIsCreatingNewProduct(false);
-                    }}
-                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer transition-colors"
-                  >
-                    Cancel
-                  </button>
+                  <div className="flex flex-wrap items-center gap-5 pt-1 text-xs text-slate-700">
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingProduct.inStock}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, inStock: e.target.checked })
+                        }
+                        className="rounded border-slate-300 text-[#1B3624]"
+                      />
+                      <span>In Stock (Available to Buy)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editingProduct.isBestSeller)}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, isBestSeller: e.target.checked })
+                        }
+                        className="rounded border-slate-300 text-[#1B3624]"
+                      />
+                      <span>Best Seller</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(editingProduct.isNew)}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, isNew: e.target.checked })
+                        }
+                        className="rounded border-slate-300 text-[#1B3624]"
+                      />
+                      <span>New Arrival</span>
+                    </label>
+                  </div>
+                </section>
 
-                  <button
-                    type="submit"
-                    disabled={isSavingProduct || isUploadingImage}
-                    className="px-7 py-3 bg-[#064E3B] hover:bg-[#047857] disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs sm:text-sm font-bold rounded-xl shadow-lg hover:shadow-xl cursor-pointer flex items-center gap-2 transition-all duration-200 hover:scale-102"
-                  >
-                    <Save className="w-4 h-4 text-amber-300" />
-                    <span>
-                      {isUploadingImage
-                        ? 'Uploading Photo...'
-                        : isSavingProduct
-                          ? 'Syncing to Live Website...'
-                          : isCreatingNewProduct
-                            ? 'Save & Launch New Product'
-                            : 'Save & Update Live Product'}
-                    </span>
-                  </button>
+                {/* SECTION 3: PRODUCT DETAILS */}
+                <section className="space-y-3.5 pt-5 border-t border-slate-200">
+                  <h3 className="text-sm font-semibold text-slate-900">3. Product Details</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Product Name
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={editingProduct.name}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, name: e.target.value })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Tamil Name (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={editingProduct.tamilName || ''}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, tamilName: e.target.value })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Category
+                      </label>
+                      <select
+                        value={editingProduct.categorySlug}
+                        onChange={(e) => {
+                          const cat = CATEGORIES.find((c) => c.slug === e.target.value);
+                          if (cat) {
+                            setEditingProduct({
+                              ...editingProduct,
+                              category: cat.name,
+                              categorySlug: cat.slug
+                            });
+                          }
+                        }}
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900 bg-white"
+                      >
+                        {CATEGORIES.map((cat) => (
+                          <option key={cat.id} value={cat.slug}>
+                            {cat.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        Short Tagline
+                      </label>
+                      <input
+                        type="text"
+                        value={editingProduct.tagline}
+                        onChange={(e) =>
+                          setEditingProduct({ ...editingProduct, tagline: e.target.value })
+                        }
+                        className="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Description
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={editingProduct.description}
+                      onChange={(e) =>
+                        setEditingProduct({ ...editingProduct, description: e.target.value })
+                      }
+                      className="w-full p-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Key Benefits (one per line)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={editingProduct.keyBenefits.join('\n')}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          keyBenefits: e.target.value
+                            .split('\n')
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                        })
+                      }
+                      className="w-full p-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                    />
+                  </div>
+                </section>
+              </div>
+
+              {/* Right Column: Live Customer Card Preview */}
+              <div className="lg:col-span-5 p-5 sm:p-6 bg-slate-50">
+                <div className="sticky top-0 space-y-3">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    Live Storefront Preview
+                  </p>
+                  <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                    <div className="aspect-square bg-white p-4 flex items-center justify-center border-b border-slate-100">
+                      <img
+                        src={editingGallery[previewGalleryIdx] || editingProduct.image}
+                        alt={editingProduct.name || 'Preview'}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+
+                    {editingGallery.length > 1 && (
+                      <div className="px-4 pt-3 flex items-center gap-2 overflow-x-auto">
+                        {editingGallery.map((g, i) => (
+                          <button
+                            key={`${g.slice(0, 20)}-${i}`}
+                            type="button"
+                            onClick={() => setPreviewGalleryIdx(i)}
+                            className={`w-11 h-11 rounded border p-0.5 shrink-0 ${
+                              previewGalleryIdx === i
+                                ? 'border-[#1B3624]'
+                                : 'border-slate-200 opacity-70 hover:opacity-100'
+                            }`}
+                          >
+                            <img src={g} alt="" className="w-full h-full object-contain" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="p-4 space-y-2.5">
+                      <p className="text-xs text-slate-500">{editingProduct.category}</p>
+                      <div>
+                        <h4 className="text-base font-semibold text-slate-900">
+                          {editingProduct.name || 'Product Name'}
+                        </h4>
+                        {editingProduct.tamilName && (
+                          <p className="text-xs text-slate-500">{editingProduct.tamilName}</p>
+                        )}
+                      </div>
+
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-semibold text-slate-900 tabular-nums">
+                          &#8377;{editingProduct.price || 0}
+                        </span>
+                        {editingProduct.originalPrice > editingProduct.price && (
+                          <>
+                            <span className="text-sm text-slate-400 line-through tabular-nums">
+                              &#8377;{editingProduct.originalPrice}
+                            </span>
+                            <span className="text-xs font-medium text-emerald-700 tabular-nums">
+                              {Math.round(
+                                ((editingProduct.originalPrice - editingProduct.price) /
+                                  editingProduct.originalPrice) *
+                                  100
+                              )}
+                              % off
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {editingProduct.weightOptions.map((w) => (
+                          <span
+                            key={w}
+                            className={`px-2 py-0.5 rounded text-xs border ${
+                              w === editingProduct.defaultWeight
+                                ? 'border-[#1B3624] bg-emerald-50 text-[#1B3624] font-medium'
+                                : 'border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {w}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="pt-2">
+                        <div className="w-full h-9 rounded-lg bg-[#1B3624] text-white text-xs font-medium flex items-center justify-center">
+                          {editingProduct.inStock ? 'Add to Cart' : 'Out of Stock'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </form>
+              </div>
             </div>
-          </div>
-        )}
 
-      </div>
+            {/* Editor Sticky Footer */}
+            <div className="shrink-0 px-5 py-3.5 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                Changes save to Cloud Firestore and appear live across all customer devices.
+              </p>
+              <div className="flex items-center gap-2.5 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingProduct(null);
+                    setIsAddingProduct(false);
+                  }}
+                  className="h-9 px-4 rounded-lg border border-slate-200 hover:bg-slate-50 text-sm font-medium text-slate-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProduct || isUploadingImage}
+                  className="h-9 px-5 rounded-lg bg-[#1B3624] hover:bg-[#14291b] disabled:opacity-60 text-white text-sm font-medium inline-flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingProduct ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Publishing...</span>
+                    </>
+                  ) : (
+                    <span>{isAddingProduct ? 'Publish New Product' : 'Update Live Website'}</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ==================== ORDER EDITOR SUB-MODAL ==================== */}
+      {editingOrder && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSaveOrder}
+            className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  Order {editingOrder.id}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {editingOrder.customerName} &middot; {editingOrder.phone}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingOrder(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Order Status
+                </label>
+                <select
+                  value={orderDraftStatus}
+                  onChange={(e) => setOrderDraftStatus(e.target.value as Order['status'])}
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-slate-900"
+                >
+                  {ORDER_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Courier / Tracking Number
+                </label>
+                <input
+                  type="text"
+                  value={orderDraftTracking}
+                  onChange={(e) => setOrderDraftTracking(e.target.value)}
+                  placeholder="e.g. IND98427190IN"
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 font-mono text-xs text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Internal Admin Note
+                </label>
+                <textarea
+                  rows={3}
+                  value={orderDraftNote}
+                  onChange={(e) => setOrderDraftNote(e.target.value)}
+                  className="w-full p-3 rounded-lg border border-slate-200 text-sm text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+              <a
+                href={`https://wa.me/${editingOrder.phone.replace(/[^\d]/g, '')}?text=${encodeURIComponent(
+                  `Hello ${editingOrder.customerName}, your Banaya Enterprises order ${editingOrder.id} status is now: ${orderDraftStatus}${
+                    orderDraftTracking ? ` (Tracking: ${orderDraftTracking})` : ''
+                  }.`
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-[#1B3624] hover:underline"
+              >
+                <span>Notify on WhatsApp</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingOrder(null)}
+                  className="h-9 px-3.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="h-9 px-4 rounded-lg bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium"
+                >
+                  Save Order
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
