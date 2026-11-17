@@ -40,7 +40,7 @@ import {
   DISPLAY_PHONE_NUMBER,
   BANAYA_UPI_ID
 } from '../utils/whatsapp';
-import { BANAYA_CONTACT_EMAIL } from '../config/storeContact';
+import { BANAYA_CONTACT_EMAIL, BANAYA_BANK_DETAILS } from '../config/storeContact';
 import { getPriceForProductWeight } from '../utils/pricing';
 import {
   downloadOrderReceipt,
@@ -68,7 +68,7 @@ interface BankConfig {
   popular: boolean;
 }
 
-const BANAYA_QR_IMAGE = '/assets/aistudio/image_07be354a.png';
+const BANAYA_QR_IMAGE = '/assets/aistudio/image_c09b5af4.png';
 
 const PAYMENT_OPTIONS: PaymentOptionConfig[] = [
   {
@@ -147,13 +147,22 @@ const INDIAN_BANKS: BankConfig[] = [
     popular: true
   },
   {
+    id: 'iob',
+    name: 'Indian Overseas Bank (IOB)',
+    shortName: 'IOB',
+    code: 'IOB',
+    accentClass: 'bg-sky-900 text-white',
+    portalUrl: 'https://www.iobnet.co.in/ibanking/login.do',
+    popular: true
+  },
+  {
     id: 'indian',
     name: 'Indian Bank',
     shortName: 'Indian Bank',
     code: 'INDB',
     accentClass: 'bg-sky-800 text-white',
     portalUrl: 'https://www.indianbank.net.in/',
-    popular: true
+    popular: false
   },
   {
     id: 'canara',
@@ -205,9 +214,10 @@ const BANK_UPI_LIMITS: BankUpiLimitInfo[] = [
   { bank: 'HDFC Bank', perTxnAndDailyUpi: '₹1,00,000 (₹5k first 24h)', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
   { bank: 'ICICI Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹10,00,000' },
   { bank: 'Axis Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
+  { bank: 'Indian Overseas Bank (IOB)', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹5,00,000' },
   { bank: 'Indian Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹5,00,000' },
   { bank: 'Canara / PNB / BOB / Union', perTxnAndDailyUpi: '₹50,000 – ₹1,00,000', dailyCountCap: '10 – 20 txns / 24h', netBankingLimit: '₹5,00,000' },
-  { bank: 'Browser UPI App Link (NPCI Rule)', perTxnAndDailyUpi: '₹2,000 cap on some banks', dailyCountCap: 'Varies by bank', netBankingLimit: 'Use Manual UPI ID or NetBanking' }
+  { bank: 'Browser UPI App Link (NPCI Rule)', perTxnAndDailyUpi: '₹2,000 cap on some banks', dailyCountCap: 'Varies by bank', netBankingLimit: 'Use Bank Transfer / NetBanking' }
 ];
 
 async function copyTextSafely(text: string): Promise<boolean> {
@@ -284,6 +294,9 @@ export const CheckoutModal: React.FC = () => {
 
   const [copiedVpa, setCopiedVpa] = useState(false);
   const [copiedAmount, setCopiedAmount] = useState(false);
+  const [copiedAcctNo, setCopiedAcctNo] = useState(false);
+  const [copiedIfsc, setCopiedIfsc] = useState(false);
+  const [showBankTransferDetails, setShowBankTransferDetails] = useState(false);
   const [copiedOrderId, setCopiedOrderId] = useState(false);
   const [copiedTxn, setCopiedTxn] = useState(false);
 
@@ -375,7 +388,6 @@ export const CheckoutModal: React.FC = () => {
     typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   // Clean UPI Intent builder WITHOUT unsigned mode=02 & tr= parameters
-  // (Passing mode=02 + tr= without an aggregator RSA sign triggers bank "exceeded limit" blocks)
   const buildUpiIntentMap = (
     amountInr: number
   ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
@@ -383,30 +395,32 @@ export const CheckoutModal: React.FC = () => {
     const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tn=${encodedPayNote}&am=${safeAmount}&cu=INR`;
     return {
       gpay: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end;`
+        ? `intent://upi/pay?${params}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
         : `tez://upi/pay?${params}`,
       phonepe: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end;`
+        ? `intent://pay?${params}#Intent;scheme=phonepe;package=com.phonepe.app;end;`
         : `phonepe://pay?${params}`,
       paytm: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end;`
+        ? `intent://pay?${params}#Intent;scheme=paytmmp;package=net.one97.paytm;end;`
         : `paytmmp://pay?${params}`,
       upi: `upi://pay?${params}`
     };
   };
 
-  // Safe Native App Launchers (opens exact app directly without browser intent amount block; copies UPI ID)
+  // Safe Native App Launchers using valid app host+path WITHOUT locked browser-intent amount/tr/mode=02
+  // Opens Google Pay / PhonePe / Paytm directly to Banaya Enterprise without triggering bank limit errors
+  const safeBaseParams = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&cu=INR`;
   const appDirectOpenMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
     gpay: isAndroidDevice
-      ? 'intent://#Intent;package=com.google.android.apps.nbu.paisa.user;scheme=tez;end;'
-      : 'tez://',
+      ? `intent://upi/pay?${safeBaseParams}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
+      : `tez://upi/pay?${safeBaseParams}`,
     phonepe: isAndroidDevice
-      ? 'intent://#Intent;package=com.phonepe.app;scheme=phonepe;end;'
-      : 'phonepe://',
+      ? `intent://pay?${safeBaseParams}#Intent;scheme=phonepe;package=com.phonepe.app;end;`
+      : `phonepe://pay?${safeBaseParams}`,
     paytm: isAndroidDevice
-      ? 'intent://#Intent;package=net.one97.paytm;scheme=paytmmp;end;'
-      : 'paytmmp://',
-    upi: `upi://pay?pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&cu=INR`
+      ? `intent://pay?${safeBaseParams}#Intent;scheme=paytmmp;package=net.one97.paytm;end;`
+      : `paytmmp://pay?${safeBaseParams}`,
+    upi: `upi://pay?${safeBaseParams}`
   };
 
   const canSplitPayment = cartTotal >= 20;
@@ -1171,6 +1185,81 @@ export const CheckoutModal: React.FC = () => {
                                     </select>
                                   </div>
 
+                                  {/* Official Banaya Enterprise Beneficiary Account Details for IMPS / NEFT / RTGS */}
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2.5 text-xs">
+                                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                      <span className="font-semibold text-slate-900">
+                                        Beneficiary Account (For {selectedBank.shortName} IMPS / NEFT / RTGS)
+                                      </span>
+                                      <span className="text-[11px] font-semibold text-emerald-700">
+                                        {BANAYA_BANK_DETAILS.bankName}
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                      <div className="bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-200 flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <span className="text-[10px] text-slate-500 block">Account Number</span>
+                                          <strong className="font-mono text-slate-900 text-xs sm:text-sm">
+                                            {BANAYA_BANK_DETAILS.accountNumber}
+                                          </strong>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void handleCopyValue(
+                                              BANAYA_BANK_DETAILS.accountNumber,
+                                              setCopiedAcctNo,
+                                              'Account Number'
+                                            )
+                                          }
+                                          className="h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                                        >
+                                          {copiedAcctNo ? (
+                                            <Check className="w-3 h-3 text-emerald-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3" />
+                                          )}
+                                          <span>Copy</span>
+                                        </button>
+                                      </div>
+
+                                      <div className="bg-slate-50 rounded-lg px-2.5 py-2 border border-slate-200 flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <span className="text-[10px] text-slate-500 block">IFSC Code</span>
+                                          <strong className="font-mono text-slate-900 text-xs sm:text-sm">
+                                            {BANAYA_BANK_DETAILS.ifscCode}
+                                          </strong>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void handleCopyValue(
+                                              BANAYA_BANK_DETAILS.ifscCode,
+                                              setCopiedIfsc,
+                                              'IFSC Code'
+                                            )
+                                          }
+                                          className="h-7 px-2 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                                        >
+                                          {copiedIfsc ? (
+                                            <Check className="w-3 h-3 text-emerald-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3" />
+                                          )}
+                                          <span>Copy</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
+                                      <span>
+                                        Beneficiary: <strong className="text-slate-800">{BANAYA_BANK_DETAILS.accountHolder}</strong>
+                                      </span>
+                                      <span>
+                                        Branch: <strong className="text-slate-800">{BANAYA_BANK_DETAILS.branch}</strong>
+                                      </span>
+                                    </div>
+                                  </div>
+
                                   <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
                                     <button
                                       id="pay-netbanking-btn"
@@ -1294,6 +1383,8 @@ export const CheckoutModal: React.FC = () => {
                                             <a
                                               id={`open-${option.id}-app-btn`}
                                               href={appDirectOpenMap[option.id]}
+                                              target="_top"
+                                              rel="noopener noreferrer"
                                               onClick={(e) => handleLaunchPaymentApp(e, option.label)}
                                               className="w-full h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shadow-2xs"
                                             >
@@ -1301,7 +1392,7 @@ export const CheckoutModal: React.FC = () => {
                                               <span>
                                                 {option.id === 'upi'
                                                   ? `Pay ₹${cartTotal.toLocaleString('en-IN')} via Any UPI App`
-                                                  : `Open ${option.label} App (Copies UPI ID)`}
+                                                  : `Open ${option.label} App (Pay ₹${cartTotal.toLocaleString('en-IN')})`}
                                               </span>
                                             </a>
 
@@ -1310,13 +1401,23 @@ export const CheckoutModal: React.FC = () => {
                                                 <a
                                                   id={`pay-${option.id}-btn`}
                                                   href={upiIntentMap[option.id]}
+                                                  target="_top"
+                                                  rel="noopener noreferrer"
                                                   onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Direct Pay`)}
                                                   className="font-semibold text-[#064E3B] hover:underline inline-flex items-center gap-1"
                                                 >
-                                                  <span>Direct Intent Pay ₹{cartTotal.toLocaleString('en-IN')}</span>
+                                                  <span>Direct Amount Link (₹{cartTotal.toLocaleString('en-IN')})</span>
                                                   <ArrowRight className="w-3 h-3" />
                                                 </a>
                                               )}
+                                              <button
+                                                type="button"
+                                                onClick={() => setShowBankTransferDetails((v) => !v)}
+                                                className="font-medium text-[#064E3B] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                                              >
+                                                <Landmark className="w-3 h-3" />
+                                                <span>{showBankTransferDetails ? 'Hide Bank A/c' : 'Bank Transfer (IOB A/c + IFSC)'}</span>
+                                              </button>
                                               {canSplitPayment && (
                                                 <button
                                                   type="button"
@@ -1327,7 +1428,7 @@ export const CheckoutModal: React.FC = () => {
                                                   className="font-medium text-slate-600 hover:text-slate-900 inline-flex items-center gap-1 cursor-pointer"
                                                 >
                                                   <Split className="w-3 h-3" />
-                                                  <span>Split Payment (2 Smaller Amounts)</span>
+                                                  <span>Split Payment</span>
                                                 </button>
                                               )}
                                             </div>
@@ -1369,6 +1470,8 @@ export const CheckoutModal: React.FC = () => {
                                             <div className="grid grid-cols-2 gap-2">
                                               <a
                                                 href={splitPart1Links[option.id]}
+                                                target="_top"
+                                                rel="noopener noreferrer"
                                                 onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Part 1`)}
                                                 className="h-9 px-2.5 rounded-lg bg-[#064E3B] text-white text-xs font-semibold inline-flex items-center justify-center gap-1"
                                               >
@@ -1376,6 +1479,8 @@ export const CheckoutModal: React.FC = () => {
                                               </a>
                                               <a
                                                 href={splitPart2Links[option.id]}
+                                                target="_top"
+                                                rel="noopener noreferrer"
                                                 onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Part 2`)}
                                                 className="h-9 px-2.5 rounded-lg bg-slate-900 text-white text-xs font-semibold inline-flex items-center justify-center gap-1"
                                               >
@@ -1385,8 +1490,61 @@ export const CheckoutModal: React.FC = () => {
                                           </div>
                                         )}
 
+                                        {showBankTransferDetails && (
+                                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 space-y-2 text-[11px]">
+                                            <div className="font-semibold text-slate-900 flex items-center justify-between gap-2">
+                                              <span>Pay via Bank Transfer inside {option.label}</span>
+                                              <span className="text-emerald-700">{BANAYA_BANK_DETAILS.bankName}</span>
+                                            </div>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  void handleCopyValue(
+                                                    BANAYA_BANK_DETAILS.accountNumber,
+                                                    setCopiedAcctNo,
+                                                    'Account Number'
+                                                  )
+                                                }
+                                                className="px-2.5 py-1.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-left flex items-center justify-between gap-1 cursor-pointer"
+                                              >
+                                                <span>
+                                                  <span className="text-[10px] text-slate-500 block">A/c No.</span>
+                                                  <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.accountNumber}</strong>
+                                                </span>
+                                                {copiedAcctNo ? (
+                                                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                                ) : (
+                                                  <Copy className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                )}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  void handleCopyValue(
+                                                    BANAYA_BANK_DETAILS.ifscCode,
+                                                    setCopiedIfsc,
+                                                    'IFSC Code'
+                                                  )
+                                                }
+                                                className="px-2.5 py-1.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-left flex items-center justify-between gap-1 cursor-pointer"
+                                              >
+                                                <span>
+                                                  <span className="text-[10px] text-slate-500 block">IFSC ({BANAYA_BANK_DETAILS.branch})</span>
+                                                  <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.ifscCode}</strong>
+                                                </span>
+                                                {copiedIfsc ? (
+                                                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                                ) : (
+                                                  <Copy className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                )}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+
                                         <p className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-2">
-                                          Why Scan QR / Paste UPI ID? Some banks show <em>&ldquo;exceeded bank limit&rdquo;</em> on direct browser payment links. Paying via the QR code above or pasting <code className="font-mono text-slate-800">{BANAYA_UPI_ID}</code> inside {option.label} uses your full ₹1,00,000 bank limit.
+                                          Paying directly via QR scan, Bank Transfer (<strong>IOB A/c: {BANAYA_BANK_DETAILS.accountNumber}</strong> · IFSC: <strong>{BANAYA_BANK_DETAILS.ifscCode}</strong>), or opening {option.label} avoids NPCI browser-intent limits.
                                         </p>
                                       </div>
 
@@ -1661,11 +1819,11 @@ export const CheckoutModal: React.FC = () => {
                               Step 1: Open {selectedBank.name} Internet Banking
                             </h4>
                             <p className="text-xs text-slate-600">
-                              Sign in to your {selectedBank.shortName} NetBanking portal and complete the{' '}
+                              Sign in to your {selectedBank.shortName} NetBanking portal and complete an IMPS / NEFT transfer of{' '}
                               <strong className="text-slate-900 tabular-nums">
                                 ₹{cartTotal.toLocaleString('en-IN')}
                               </strong>{' '}
-                              transfer to <strong>Banaya Enterprise</strong> ({BANAYA_UPI_ID}). Net Banking supports up to ₹5L–₹10L with zero UPI app cap.
+                              to <strong>{BANAYA_BANK_DETAILS.accountHolder}</strong> ({BANAYA_BANK_DETAILS.bankName}). Supports up to ₹5L–₹10L with zero UPI app cap.
                             </p>
                           </div>
 
@@ -1678,6 +1836,55 @@ export const CheckoutModal: React.FC = () => {
                             <span>Open {selectedBank.shortName} NetBanking</span>
                             <ExternalLink className="w-4 h-4" />
                           </a>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-white rounded-lg border border-slate-200 p-3 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[10px] text-slate-500 block">Account Number</span>
+                              <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.accountNumber}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleCopyValue(
+                                  BANAYA_BANK_DETAILS.accountNumber,
+                                  setCopiedAcctNo,
+                                  'Account Number'
+                                )
+                              }
+                              className="h-7 px-2 rounded border border-slate-200 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer shrink-0"
+                            >
+                              {copiedAcctNo ? 'Copied' : 'Copy'}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[10px] text-slate-500 block">IFSC Code</span>
+                              <strong className="font-mono text-slate-900">{BANAYA_BANK_DETAILS.ifscCode}</strong>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleCopyValue(
+                                  BANAYA_BANK_DETAILS.ifscCode,
+                                  setCopiedIfsc,
+                                  'IFSC Code'
+                                )
+                              }
+                              className="h-7 px-2 rounded border border-slate-200 hover:bg-slate-50 text-[11px] font-medium text-slate-700 cursor-pointer shrink-0"
+                            >
+                              {copiedIfsc ? 'Copied' : 'Copy'}
+                            </button>
+                          </div>
+
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-slate-500 block">Bank &amp; Branch</span>
+                            <strong className="text-slate-900 truncate block">
+                              IOB · {BANAYA_BANK_DETAILS.branch}
+                            </strong>
+                          </div>
                         </div>
 
                         <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
