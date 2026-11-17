@@ -22,7 +22,12 @@ import {
   Download,
   FileText,
   BellRing,
-  Mail
+  Mail,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Split,
+  Info
 } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -184,6 +189,23 @@ const INDIAN_BANKS: BankConfig[] = [
   }
 ];
 
+interface BankUpiLimitInfo {
+  bank: string;
+  perTxnAndDailyUpi: string;
+  dailyCountCap: string;
+  netBankingLimit: string;
+}
+
+const BANK_UPI_LIMITS: BankUpiLimitInfo[] = [
+  { bank: 'State Bank of India (SBI)', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹10,00,000' },
+  { bank: 'HDFC Bank', perTxnAndDailyUpi: '₹1,00,000 (₹5k first 24h)', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
+  { bank: 'ICICI Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹10,00,000' },
+  { bank: 'Axis Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '20 txns / 24h', netBankingLimit: '₹10,00,000' },
+  { bank: 'Indian Bank', perTxnAndDailyUpi: '₹1,00,000', dailyCountCap: '10 txns / 24h', netBankingLimit: '₹5,00,000' },
+  { bank: 'Canara / PNB / BOB / Union', perTxnAndDailyUpi: '₹50,000 – ₹1,00,000', dailyCountCap: '10 – 20 txns / 24h', netBankingLimit: '₹5,00,000' },
+  { bank: 'Browser UPI App Link (NPCI Rule)', perTxnAndDailyUpi: '₹2,000 cap on some banks', dailyCountCap: 'Varies by bank', netBankingLimit: 'Use Manual UPI ID or NetBanking' }
+];
+
 async function copyTextSafely(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -245,6 +267,10 @@ export const CheckoutModal: React.FC = () => {
   const [customerUpiId, setCustomerUpiId] = useState<string>('');
 
   const [transactionIdInput, setTransactionIdInput] = useState('');
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitFirstAmount, setSplitFirstAmount] = useState<number>(0);
+  const [splitSecondTxnId, setSplitSecondTxnId] = useState('');
+  const [showBankLimitsGuide, setShowBankLimitsGuide] = useState(false);
   const [paymentConfirmedCheck, setPaymentConfirmedCheck] = useState(false);
 
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
@@ -253,6 +279,7 @@ export const CheckoutModal: React.FC = () => {
   const [liveTrackingNumber, setLiveTrackingNumber] = useState<string>('');
 
   const [copiedVpa, setCopiedVpa] = useState(false);
+  const [copiedAmount, setCopiedAmount] = useState(false);
   const [copiedOrderId, setCopiedOrderId] = useState(false);
   const [copiedTxn, setCopiedTxn] = useState(false);
 
@@ -338,14 +365,33 @@ export const CheckoutModal: React.FC = () => {
   const selectedOption = PAYMENT_OPTIONS.find((o) => o.id === selectedPayment) || PAYMENT_OPTIONS[0];
   const itemCount = cart.reduce((sum, it) => sum + it.quantity, 0);
 
-  const encodedPayNote = encodeURIComponent('Banaya Enterprise Order Payment');
-  const baseUpiParams = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&am=${cartTotal}&cu=INR&tn=${encodedPayNote}`;
-  const upiIntentMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
-    gpay: `gpay://upi/pay?${baseUpiParams}`,
-    phonepe: `phonepe://upi/pay?${baseUpiParams}`,
-    paytm: `paytmmp://pay?${baseUpiParams}`,
-    upi: `upi://pay?${baseUpiParams}`
+  const encodedPayNote = encodeURIComponent('Banaya Enterprise Order');
+  const activeSessionRef = gatewaySessionId || `BNY${Date.now().toString().slice(-6)}`;
+
+  const buildUpiIntentMap = (
+    amountInr: number,
+    refSuffix = ''
+  ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
+    const safeAmount = Math.max(1, Number(amountInr) || 1).toFixed(2);
+    const txnRef = `${activeSessionRef}${refSuffix}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
+    const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tr=${txnRef}&tn=${encodedPayNote}&am=${safeAmount}&cu=INR&mode=02`;
+    return {
+      gpay: `upi://pay?${params}`,
+      phonepe: `phonepe://pay?${params}`,
+      paytm: `paytmmp://pay?${params}`,
+      upi: `upi://pay?${params}`
+    };
   };
+
+  const canSplitPayment = cartTotal >= 20;
+  const effectiveSplitFirst = canSplitPayment
+    ? Math.min(Math.max(1, splitFirstAmount || Math.ceil(cartTotal / 2)), cartTotal - 1)
+    : cartTotal;
+  const effectiveSplitSecond = Math.max(1, cartTotal - effectiveSplitFirst);
+
+  const upiIntentMap = buildUpiIntentMap(cartTotal);
+  const splitPart1Links = buildUpiIntentMap(effectiveSplitFirst, 'P1');
+  const splitPart2Links = buildUpiIntentMap(effectiveSplitSecond, 'P2');
 
   const activeOrderDisplay: Order | null = createdOrder
     ? {
@@ -363,6 +409,10 @@ export const CheckoutModal: React.FC = () => {
     setSelectedBankId('sbi');
     setCustomerUpiId('');
     setTransactionIdInput('');
+    setSplitMode(false);
+    setSplitFirstAmount(0);
+    setSplitSecondTxnId('');
+    setShowBankLimitsGuide(false);
     setPaymentConfirmedCheck(false);
     setCreatedOrder(null);
     setLiveStatus('Processing');
@@ -438,8 +488,12 @@ export const CheckoutModal: React.FC = () => {
       }
     }
 
-    setGatewaySessionId(`GW-${Date.now().toString().slice(-8)}`);
+    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
+    setGatewaySessionId(sessionId);
     setTransactionIdInput('');
+    setSplitSecondTxnId('');
+    setSplitMode(false);
+    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
     setPaymentConfirmedCheck(false);
     setStep('gateway');
   };
@@ -453,15 +507,31 @@ export const CheckoutModal: React.FC = () => {
     }
 
     const cleanedTxn = transactionIdInput.trim().replace(/\s+/g, '');
-    if (cleanedTxn.length < 6 || !/^[a-zA-Z0-9_-]+$/.test(cleanedTxn)) {
+    if (cleanedTxn.length < 6 || !/^[a-zA-Z0-9_/-]+$/.test(cleanedTxn)) {
       showToast(
         'Transaction Reference Required',
-        selectedPayment === 'netbanking'
-          ? `Please enter the ${selectedBank.shortName} Bank Reference / UTR Number (minimum 6 characters).`
-          : 'Please enter the UPI Transaction ID / UTR Number (minimum 6 characters) after completing payment.',
+        splitMode
+          ? `Please enter the Part 1 (₹${effectiveSplitFirst.toLocaleString('en-IN')}) UTR / Reference Number (min 6 characters).`
+          : selectedPayment === 'netbanking'
+            ? `Please enter the ${selectedBank.shortName} Bank Reference / UTR Number (minimum 6 characters).`
+            : 'Please enter the UPI Transaction ID / UTR Number (minimum 6 characters) after completing payment.',
         'warning'
       );
       return;
+    }
+
+    let combinedTxnRef = cleanedTxn.slice(0, 115);
+    if (splitMode && canSplitPayment) {
+      const cleanedTxn2 = splitSecondTxnId.trim().replace(/\s+/g, '');
+      if (cleanedTxn2.length < 6 || !/^[a-zA-Z0-9_/-]+$/.test(cleanedTxn2)) {
+        showToast(
+          'Part 2 UTR Required',
+          `Please enter the Part 2 (₹${effectiveSplitSecond.toLocaleString('en-IN')}) UTR / Reference Number after completing both smaller transfers.`,
+          'warning'
+        );
+        return;
+      }
+      combinedTxnRef = `${cleanedTxn} + ${cleanedTxn2}`.slice(0, 115);
     }
 
     if (!paymentConfirmedCheck) {
@@ -473,12 +543,18 @@ export const CheckoutModal: React.FC = () => {
       return;
     }
 
-    const paymentMethodLabel =
+    const baseMethodLabel =
       selectedPayment === 'netbanking'
         ? `Net Banking (${selectedBank.name})`
         : selectedPayment === 'upi'
           ? `UPI (${customerUpiId.trim()})`
           : `${selectedOption.label} (${BANAYA_UPI_ID})`;
+
+    const paymentMethodLabel = (
+      splitMode && canSplitPayment
+        ? `${baseMethodLabel} [Split: ₹${effectiveSplitFirst}+₹${effectiveSplitSecond}]`
+        : baseMethodLabel
+    ).slice(0, 155);
 
     const order = placeOrder({
       customerName: name.trim(),
@@ -488,8 +564,8 @@ export const CheckoutModal: React.FC = () => {
       city: city.trim(),
       postalCode: pin.trim(),
       paymentMethod: paymentMethodLabel,
-      transactionId: cleanedTxn,
-      bankRef: cleanedTxn
+      transactionId: combinedTxnRef,
+      bankRef: combinedTxnRef
     });
 
     setCreatedOrder(order);
@@ -500,7 +576,7 @@ export const CheckoutModal: React.FC = () => {
 
     showToast(
       'Returned to Banaya Enterprise',
-      `Order ${order.id} submitted with reference ${cleanedTxn}. Payment verification is in progress.`,
+      `Order ${order.id} submitted with reference ${combinedTxnRef}. Payment verification is in progress.`,
       'info'
     );
   };
@@ -1100,6 +1176,11 @@ export const CheckoutModal: React.FC = () => {
                                     </strong>
                                     . You will return automatically to Banaya Enterprise after completing payment.
                                   </p>
+                                  {cartTotal > 2000 && (
+                                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+                                      Tip: Many banks cap browser UPI links at ₹2,000. If your app warns &ldquo;exceeded bank limit&rdquo;, use Manual UPI ID, Split Payment, or Net Banking on the next step.
+                                    </p>
+                                  )}
                                   <button
                                     id={`pay-${option.id}-btn`}
                                     type="button"
@@ -1172,14 +1253,36 @@ export const CheckoutModal: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl border border-slate-200 p-3.5 text-xs text-slate-600 space-y-1">
+                <div className="bg-white rounded-xl border border-slate-200 p-3.5 text-xs text-slate-600 space-y-2">
                   <div className="font-semibold text-slate-800 flex items-center gap-1.5">
                     <ShieldCheck className="w-4 h-4 text-emerald-700" />
-                    <span>Prepaid Checkout Policy</span>
+                    <span>Prepaid Checkout &amp; Bank Limit Guide</span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-slate-500">
-                    Cash on Delivery is not available. Complete payment via Net Banking or UPI to return and confirm your order.
+                    Cash on Delivery is not available. If your UPI app shows &ldquo;exceeded bank limit&rdquo;, use <strong>Net Banking</strong> (up to ₹10L limit) or pay manually inside GPay/PhonePe using UPI ID <code className="font-mono text-slate-800">{BANAYA_UPI_ID}</code>.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowBankLimitsGuide((v) => !v)}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#064E3B] hover:underline cursor-pointer"
+                  >
+                    <Info className="w-3.5 h-3.5" />
+                    <span>{showBankLimitsGuide ? 'Hide UPI Limit per Bank' : 'Check UPI Limit per Bank'}</span>
+                    {showBankLimitsGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {showBankLimitsGuide && (
+                    <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                      {BANK_UPI_LIMITS.map((row) => (
+                        <div key={row.bank} className="text-[11px] flex items-start justify-between gap-2 py-1 border-b border-slate-100 last:border-b-0">
+                          <span className="font-medium text-slate-800">{row.bank}</span>
+                          <span className="text-right text-slate-600 tabular-nums shrink-0">
+                            {row.perTxnAndDailyUpi}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1299,7 +1402,7 @@ export const CheckoutModal: React.FC = () => {
                               <strong className="text-slate-900 tabular-nums">
                                 ₹{cartTotal.toLocaleString('en-IN')}
                               </strong>{' '}
-                              transfer to <strong>Banaya Enterprise</strong> ({BANAYA_UPI_ID}).
+                              transfer to <strong>Banaya Enterprise</strong> ({BANAYA_UPI_ID}). Net Banking supports up to ₹5L–₹10L with zero UPI app cap.
                             </p>
                           </div>
 
@@ -1313,60 +1416,263 @@ export const CheckoutModal: React.FC = () => {
                             <ExternalLink className="w-4 h-4" />
                           </a>
                         </div>
+
+                        <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-2 text-xs">
+                          <label htmlFor="gateway-bank-select" className="font-medium text-slate-700">
+                            Change Bank:
+                          </label>
+                          <select
+                            id="gateway-bank-select"
+                            value={selectedBankId}
+                            onChange={(e) => setSelectedBankId(e.target.value)}
+                            className="h-8 px-2.5 rounded-md border border-slate-300 bg-white text-xs text-slate-900"
+                          >
+                            {INDIAN_BANKS.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     ) : (
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-semibold text-slate-900">
-                              Step 1: Approve ₹{cartTotal.toLocaleString('en-IN')} in {selectedOption.label}
-                            </h4>
-                            <p className="text-xs text-slate-600">
-                              {selectedPayment === 'upi' && customerUpiId
-                                ? `Open your UPI app linked to ${customerUpiId} and authorize ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise.`
-                                : `Open ${selectedOption.label} on your phone and complete the ₹${cartTotal.toLocaleString('en-IN')} transfer to Banaya Enterprise (${BANAYA_UPI_ID}).`}
-                            </p>
+                      <div className="space-y-4">
+                        {/* Primary Single or Split Payment Launcher */}
+                        {!splitMode ? (
+                          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-semibold text-slate-900">
+                                  Step 1: Approve ₹{cartTotal.toLocaleString('en-IN')} in {selectedOption.label}
+                                </h4>
+                                <p className="text-xs text-slate-600">
+                                  {selectedPayment === 'upi' && customerUpiId
+                                    ? `Open your UPI app linked to ${customerUpiId} and authorize ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise.`
+                                    : `Open ${selectedOption.label} on your phone and transfer ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise (${BANAYA_UPI_ID}).`}
+                                </p>
+                              </div>
+
+                              <a
+                                href={upiIntentMap[selectedPayment]}
+                                className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
+                              >
+                                <Smartphone className="w-4 h-4" />
+                                <span>Open {selectedOption.label} App</span>
+                              </a>
+                            </div>
+                          </div>
+                        ) : (
+                          /* 2-Part Split Payment Launcher for Bank Per-Txn Limits */
+                          <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-3.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                <Split className="w-4 h-4 text-[#064E3B]" />
+                                <span>Split Payment into 2 Smaller UPI Transfers</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setSplitMode(false)}
+                                className="text-xs font-medium text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                              >
+                                Back to Single Payment
+                              </button>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-xs bg-white p-3 rounded-lg border border-slate-200">
+                              <label htmlFor="split-part1-amt" className="font-medium text-slate-700">
+                                Part 1 Amount (₹):
+                              </label>
+                              <input
+                                id="split-part1-amt"
+                                type="number"
+                                min={1}
+                                max={cartTotal - 1}
+                                value={effectiveSplitFirst}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value) || 1;
+                                  setSplitFirstAmount(Math.min(Math.max(1, val), cartTotal - 1));
+                                }}
+                                className="w-24 h-8 px-2 rounded border border-slate-300 font-mono font-semibold text-slate-900"
+                              />
+                              <span className="text-slate-600">
+                                + Part 2 Amount: <strong className="font-mono text-slate-900">₹{effectiveSplitSecond.toLocaleString('en-IN')}</strong>
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              <a
+                                href={splitPart1Links[selectedPayment]}
+                                className="h-10 px-3 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
+                              >
+                                <Smartphone className="w-4 h-4" />
+                                <span>Pay Part 1: ₹{effectiveSplitFirst.toLocaleString('en-IN')}</span>
+                              </a>
+                              <a
+                                href={splitPart2Links[selectedPayment]}
+                                className="h-10 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
+                              >
+                                <Smartphone className="w-4 h-4" />
+                                <span>Pay Part 2: ₹{effectiveSplitSecond.toLocaleString('en-IN')}</span>
+                              </a>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Bank Limit Exceeded / Browser UPI Block Recovery Box */}
+                        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3 text-xs">
+                          <div className="flex items-start gap-2.5">
+                            <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                            <div className="space-y-1">
+                              <h5 className="font-semibold text-amber-950">
+                                Saw &ldquo;Your money has not been debited / Exceeded bank limit&rdquo;?
+                              </h5>
+                              <p className="text-amber-900 leading-relaxed">
+                                Many Indian banks block browser UPI links above ₹2,000 or limit daily UPI app transfers. Your account was <strong>not debited</strong>. Use any instant option below:
+                              </p>
+                            </div>
                           </div>
 
-                          <a
-                            href={upiIntentMap[selectedPayment]}
-                            className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
-                          >
-                            <Smartphone className="w-4 h-4" />
-                            <span>Open {selectedOption.label} App</span>
-                          </a>
+                          <div className="bg-white rounded-lg border border-amber-200/80 p-3 space-y-2">
+                            <div className="font-semibold text-slate-900">
+                              Option 1 (Fastest Fix): Pay Directly inside {selectedOption.label} using UPI ID
+                            </div>
+                            <p className="text-[11px] text-slate-600">
+                              Open your UPI app manually &rarr; tap <strong>Pay UPI ID / Number</strong> &rarr; paste our ID below (bypasses browser-intent limits):
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
+                                className="h-8 px-3 rounded-md border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-mono font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <span>{BANAYA_UPI_ID}</span>
+                                {copiedVpa ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
+                                className="h-8 px-3 rounded-md border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-mono font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <span>₹{cartTotal.toLocaleString('en-IN')}</span>
+                                {copiedAmount ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPayment('netbanking');
+                                setSplitMode(false);
+                              }}
+                              className="h-8 px-3 rounded-md bg-slate-900 hover:bg-slate-800 text-white font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Building2 className="w-3.5 h-3.5" />
+                              <span>Option 2: Switch to Net Banking (Up to ₹10L Limit)</span>
+                            </button>
+
+                            {canSplitPayment && !splitMode && (
+                              <button
+                                type="button"
+                                onClick={() => setSplitMode(true)}
+                                className="h-8 px-3 rounded-md border border-emerald-700 bg-white hover:bg-emerald-50 text-[#064E3B] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Split className="w-3.5 h-3.5" />
+                                <span>Option 3: Split into 2 Smaller Amounts</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setShowBankLimitsGuide((v) => !v)}
+                              className="h-8 px-2.5 rounded-md border border-amber-300 bg-white hover:bg-amber-100/60 text-amber-950 font-medium inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <Info className="w-3.5 h-3.5" />
+                              <span>Check Bank UPI Limits</span>
+                            </button>
+                          </div>
+
+                          {showBankLimitsGuide && (
+                            <div className="bg-white rounded-lg border border-amber-200 overflow-hidden">
+                              <table className="w-full text-left text-[11px] border-collapse">
+                                <thead>
+                                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                                    <th className="py-2 px-2.5">Bank / Method</th>
+                                    <th className="py-2 px-2.5">UPI Limit</th>
+                                    <th className="py-2 px-2.5">24h Txn Count</th>
+                                    <th className="py-2 px-2.5">NetBanking</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {BANK_UPI_LIMITS.map((row) => (
+                                    <tr key={row.bank}>
+                                      <td className="py-1.5 px-2.5 font-medium text-slate-900">{row.bank}</td>
+                                      <td className="py-1.5 px-2.5 text-slate-700 tabular-nums">{row.perTxnAndDailyUpi}</td>
+                                      <td className="py-1.5 px-2.5 text-slate-600">{row.dailyCountCap}</td>
+                                      <td className="py-1.5 px-2.5 font-medium text-emerald-800">{row.netBankingLimit}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
 
                     {/* Step 2 inside Gateway: Enter Bank / UPI Reference to Complete Payment & Return to Store */}
                     <div className="space-y-3 pt-1">
-                      <div>
-                        <label
-                          htmlFor="gateway-txn-id"
-                          className="block text-xs font-semibold text-slate-800 mb-1"
-                        >
-                          {selectedPayment === 'netbanking'
-                            ? `Step 2: Enter ${selectedBank.shortName} Bank Reference / UTR Number *`
-                            : `Step 2: Enter ${selectedOption.label} Transaction ID / UTR *`}
-                        </label>
-                        <input
-                          id="gateway-txn-id"
-                          type="text"
-                          required
-                          value={transactionIdInput}
-                          onChange={(e) => setTransactionIdInput(e.target.value)}
-                          placeholder={
-                            selectedPayment === 'netbanking'
-                              ? 'e.g. SBI241116009812 or IMPS UTR'
-                              : 'e.g. 432198765432 (12-digit UPI Ref ID)'
-                          }
-                          className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                        />
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Enter the reference shown on your bank or UPI receipt after payment succeeds.
-                        </p>
+                      <div className={splitMode && canSplitPayment ? 'grid grid-cols-1 sm:grid-cols-2 gap-3' : ''}>
+                        <div>
+                          <label
+                            htmlFor="gateway-txn-id"
+                            className="block text-xs font-semibold text-slate-800 mb-1"
+                          >
+                            {splitMode && canSplitPayment
+                              ? `Part 1 UTR / Txn ID (₹${effectiveSplitFirst.toLocaleString('en-IN')}) *`
+                              : selectedPayment === 'netbanking'
+                                ? `Step 2: Enter ${selectedBank.shortName} Bank Reference / UTR Number *`
+                                : `Step 2: Enter ${selectedOption.label} Transaction ID / UTR *`}
+                          </label>
+                          <input
+                            id="gateway-txn-id"
+                            type="text"
+                            required
+                            value={transactionIdInput}
+                            onChange={(e) => setTransactionIdInput(e.target.value)}
+                            placeholder={
+                              selectedPayment === 'netbanking'
+                                ? 'e.g. SBI241116009812 or IMPS UTR'
+                                : 'e.g. 432198765432 (12-digit UPI Ref ID)'
+                            }
+                            className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                          />
+                        </div>
+
+                        {splitMode && canSplitPayment && (
+                          <div>
+                            <label
+                              htmlFor="gateway-txn-id-2"
+                              className="block text-xs font-semibold text-slate-800 mb-1"
+                            >
+                              Part 2 UTR / Txn ID (₹{effectiveSplitSecond.toLocaleString('en-IN')}) *
+                            </label>
+                            <input
+                              id="gateway-txn-id-2"
+                              type="text"
+                              required
+                              value={splitSecondTxnId}
+                              onChange={(e) => setSplitSecondTxnId(e.target.value)}
+                              placeholder="e.g. 432198765499 (2nd UPI Ref ID)"
+                              className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                            />
+                          </div>
+                        )}
                       </div>
+                      <p className="text-[11px] text-slate-500">
+                        Enter the 12-digit UTR / Bank Reference shown on your payment receipt after transfer succeeds.
+                      </p>
 
                       <label className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-50 border border-slate-200 cursor-pointer text-xs text-slate-800">
                         <input
@@ -1380,7 +1686,9 @@ export const CheckoutModal: React.FC = () => {
                           <strong>₹{cartTotal.toLocaleString('en-IN')}</strong> payment{' '}
                           {selectedPayment === 'netbanking'
                             ? `via ${selectedBank.name}`
-                            : `via ${selectedOption.label}`}{' '}
+                            : splitMode && canSplitPayment
+                              ? `in 2 transfers via ${selectedOption.label}`
+                              : `via ${selectedOption.label}`}{' '}
                           and want to return to Banaya Enterprise.
                         </span>
                       </label>
