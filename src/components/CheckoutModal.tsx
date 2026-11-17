@@ -435,45 +435,40 @@ export const CheckoutModal: React.FC = () => {
   const selectedOption = PAYMENT_OPTIONS.find((o) => o.id === selectedPayment) || PAYMENT_OPTIONS[0];
   const itemCount = cart.reduce((sum, it) => sum + it.quantity, 0);
 
-  const encodedPayNote = encodeURIComponent('Banaya Enterprise Order');
-  const isAndroidDevice = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
   const isMobileDevice =
-    typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    typeof navigator !== 'undefined' &&
+    (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && typeof window !== 'undefined' && window.innerWidth < 1024));
 
-  // Clean UPI Intent builder WITHOUT unsigned mode=02 & tr= parameters
+  const formatUpiAmount = (amountInr: number): string => {
+    const clean = Math.max(1, Number(amountInr) || 1);
+    return Number.isInteger(clean) ? String(clean) : clean.toFixed(2);
+  };
+
+  // Native UPI Deep Link builder: upi://pay?pa=banayaenterprise100-1@oksbi&pn=BanayaEnterprise&am=TOTAL_AMOUNT&cu=INR
+  const buildNativeUpiUrl = (amountInr?: number): string =>
+    amountInr !== undefined
+      ? `upi://pay?pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&am=${formatUpiAmount(amountInr)}&cu=INR`
+      : `upi://pay?pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&cu=INR`;
+
   const buildUpiIntentMap = (
     amountInr: number
   ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
-    const safeAmount = Math.max(1, Number(amountInr) || 1).toFixed(2);
-    const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tn=${encodedPayNote}&am=${safeAmount}&cu=INR`;
+    const nativeDeepLink = buildNativeUpiUrl(amountInr);
     return {
-      gpay: isAndroidDevice
-        ? `intent://upi/pay?${params}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
-        : `tez://upi/pay?${params}`,
-      phonepe: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=phonepe;package=com.phonepe.app;end;`
-        : `phonepe://pay?${params}`,
-      paytm: isAndroidDevice
-        ? `intent://pay?${params}#Intent;scheme=paytmmp;package=net.one97.paytm;end;`
-        : `paytmmp://pay?${params}`,
-      upi: `upi://pay?${params}`
+      gpay: nativeDeepLink,
+      phonepe: nativeDeepLink,
+      paytm: nativeDeepLink,
+      upi: nativeDeepLink
     };
   };
 
-  // Safe Native App Launchers using valid app host+path WITHOUT locked browser-intent amount/tr/mode=02
-  // Opens Google Pay / PhonePe / Paytm directly to Banaya Enterprise without triggering bank limit errors
-  const safeBaseParams = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&cu=INR`;
+  // Manual-amount native UPI deep link without pre-locked amount
   const appDirectOpenMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
-    gpay: isAndroidDevice
-      ? `intent://upi/pay?${safeBaseParams}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
-      : `tez://upi/pay?${safeBaseParams}`,
-    phonepe: isAndroidDevice
-      ? `intent://pay?${safeBaseParams}#Intent;scheme=phonepe;package=com.phonepe.app;end;`
-      : `phonepe://pay?${safeBaseParams}`,
-    paytm: isAndroidDevice
-      ? `intent://pay?${safeBaseParams}#Intent;scheme=paytmmp;package=net.one97.paytm;end;`
-      : `paytmmp://pay?${safeBaseParams}`,
-    upi: `upi://pay?${safeBaseParams}`
+    gpay: buildNativeUpiUrl(),
+    phonepe: buildNativeUpiUrl(),
+    paytm: buildNativeUpiUrl(),
+    upi: buildNativeUpiUrl()
   };
 
   const canSplitPayment = cartTotal >= 20;
@@ -487,7 +482,7 @@ export const CheckoutModal: React.FC = () => {
   const splitPart2Links = buildUpiIntentMap(effectiveSplitSecond);
 
   const handleLaunchPaymentApp = (
-    e: React.MouseEvent<HTMLAnchorElement>,
+    _e: React.MouseEvent<HTMLAnchorElement>,
     appLabel: string
   ) => {
     void copyTextSafely(BANAYA_UPI_ID);
@@ -495,10 +490,9 @@ export const CheckoutModal: React.FC = () => {
     window.setTimeout(() => setCopiedVpa(false), 3000);
 
     if (!isMobileDevice) {
-      e.preventDefault();
       showToast(
-        'Mobile App Required',
-        `UPI ID (${BANAYA_UPI_ID}) copied! Open ${appLabel} on your phone to send ₹${cartTotal.toLocaleString('en-IN')}, or switch to Net Banking on desktop.`,
+        `Opening ${appLabel} UPI Link`,
+        `UPI ID (${BANAYA_UPI_ID}) copied! Complete ₹${cartTotal.toLocaleString('en-IN')} in your UPI app or use Net Banking on desktop.`,
         'info'
       );
       return;
@@ -581,12 +575,12 @@ export const CheckoutModal: React.FC = () => {
       return;
     }
 
-    if (selectedPayment === 'upi') {
+    if (selectedPayment === 'upi' && customerUpiId.trim()) {
       const cleanUpi = customerUpiId.trim();
-      if (!cleanUpi || !/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
+      if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
         showToast(
-          'Enter Valid UPI ID',
-          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl).',
+          'Check UPI ID Format',
+          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl), or leave blank to open your UPI app directly.',
           'warning'
         );
         return;
@@ -718,19 +712,12 @@ export const CheckoutModal: React.FC = () => {
       }
     }
 
-    // 2) Direct App Intent Fallback (opens Google Pay / PhonePe / Paytm with ₹{cartTotal} directly)
-    if (selectedPayment !== 'netbanking' && isMobileDevice) {
+    // 2) Direct Native UPI Deep Link (upi://pay?pa=...&pn=BanayaEnterprise&am=...&cu=INR)
+    if (selectedPayment !== 'netbanking') {
       try {
-        const anchor = document.createElement('a');
-        anchor.href = upiIntentMap[selectedPayment];
-        anchor.target = '_top';
-        anchor.rel = 'noopener noreferrer';
-        anchor.style.display = 'none';
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
+        window.location.href = upiIntentMap[selectedPayment];
       } catch {
-        // Gateway screen below also provides direct app launch links
+        // Gateway screen below also provides direct native upi:// launch links
       }
     }
 
@@ -742,6 +729,45 @@ export const CheckoutModal: React.FC = () => {
     setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
     setPaymentConfirmedCheck(false);
     setStep('gateway');
+  };
+
+  const handleDirectAnchorStepTransition = (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    appLabel: string
+  ) => {
+    if (selectedPayment === 'upi' && customerUpiId.trim()) {
+      const cleanUpi = customerUpiId.trim();
+      if (!/^[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9]{2,}$/.test(cleanUpi)) {
+        e.preventDefault();
+        showToast(
+          'Check UPI ID Format',
+          'Please enter a valid UPI ID (for example: yourname@oksbi or yourname@ybl), or leave blank to open your UPI app directly.',
+          'warning'
+        );
+        return;
+      }
+    }
+
+    void copyTextSafely(BANAYA_UPI_ID);
+    setCopiedVpa(true);
+    window.setTimeout(() => setCopiedVpa(false), 3000);
+
+    showToast(
+      `Opening ${appLabel}...`,
+      `Authorizing ₹${cartTotal.toLocaleString('en-IN')} to Banaya Enterprise (${BANAYA_UPI_ID}).`,
+      'info'
+    );
+
+    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
+    setGatewaySessionId(sessionId);
+    setTransactionIdInput('');
+    setSplitSecondTxnId('');
+    setSplitMode(false);
+    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
+    setPaymentConfirmedCheck(false);
+    window.setTimeout(() => {
+      setStep('gateway');
+    }, 200);
   };
 
   // Complete Payment inside the Net Banking / UPI Gateway & Return to Store Page
@@ -1486,22 +1512,34 @@ export const CheckoutModal: React.FC = () => {
                                     </p>
                                   </div>
 
-                                  <button
-                                    id="pay-upi-btn"
-                                    type="button"
-                                    disabled={isLaunchingGateway}
-                                    onClick={() => void handleInitiateDirectPay()}
-                                    className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                  >
-                                    {isLaunchingGateway ? (
-                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <>
-                                        <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via UPI</span>
-                                        <ArrowRight className="w-4 h-4" />
-                                      </>
-                                    )}
-                                  </button>
+                                  {!gatewayConfig.razorpayEnabled ? (
+                                    <a
+                                      id="pay-upi-btn"
+                                      href={upiIntentMap.upi}
+                                      onClick={(e) => handleDirectAnchorStepTransition(e, 'UPI App')}
+                                      className="w-full sm:w-auto sm:inline-flex min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                    >
+                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via UPI</span>
+                                      <ArrowRight className="w-4 h-4" />
+                                    </a>
+                                  ) : (
+                                    <button
+                                      id="pay-upi-btn"
+                                      type="button"
+                                      disabled={isLaunchingGateway}
+                                      onClick={() => void handleInitiateDirectPay()}
+                                      className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                    >
+                                      {isLaunchingGateway ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <>
+                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via UPI</span>
+                                          <ArrowRight className="w-4 h-4" />
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
                                   <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
                                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
                                     <span>
@@ -1519,22 +1557,34 @@ export const CheckoutModal: React.FC = () => {
                                     </strong>{' '}
                                     pre-filled to <strong>Banaya Enterprise</strong>. After paying, you return to the order confirmation screen.
                                   </p>
-                                  <button
-                                    id={`pay-${option.id}-btn`}
-                                    type="button"
-                                    disabled={isLaunchingGateway}
-                                    onClick={() => void handleInitiateDirectPay()}
-                                    className="w-full sm:w-auto min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                  >
-                                    {isLaunchingGateway ? (
-                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <>
-                                        <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
-                                        <ArrowRight className="w-4 h-4" />
-                                      </>
-                                    )}
-                                  </button>
+                                  {!gatewayConfig.razorpayEnabled ? (
+                                    <a
+                                      id={`pay-${option.id}-btn`}
+                                      href={upiIntentMap[option.id]}
+                                      onClick={(e) => handleDirectAnchorStepTransition(e, option.label)}
+                                      className="w-full sm:w-auto sm:inline-flex min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                    >
+                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
+                                      <ArrowRight className="w-4 h-4" />
+                                    </a>
+                                  ) : (
+                                    <button
+                                      id={`pay-${option.id}-btn`}
+                                      type="button"
+                                      disabled={isLaunchingGateway}
+                                      onClick={() => void handleInitiateDirectPay()}
+                                      className="w-full sm:w-auto min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] disabled:opacity-60 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                    >
+                                      {isLaunchingGateway ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <>
+                                          <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
+                                          <ArrowRight className="w-4 h-4" />
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
                                   <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
                                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
                                     <span>
@@ -1866,10 +1916,9 @@ export const CheckoutModal: React.FC = () => {
                                 </p>
                               </div>
 
-                              <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
+                              <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
                                 <a
                                   href={upiIntentMap[selectedPayment]}
-                                  target="_top"
                                   rel="noopener noreferrer"
                                   onClick={(e) => handleLaunchPaymentApp(e, selectedOption.label)}
                                   className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
@@ -1879,12 +1928,11 @@ export const CheckoutModal: React.FC = () => {
                                 </a>
                                 <a
                                   href={appDirectOpenMap[selectedPayment]}
-                                  target="_top"
                                   rel="noopener noreferrer"
                                   onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} (Manual Amount)`)}
-                                  className="text-[11px] font-medium text-[#064E3B] hover:underline text-center sm:text-right"
+                                  className="h-9 px-3 rounded-lg border border-[#064E3B]/30 bg-white hover:bg-emerald-50 text-[#064E3B] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
                                 >
-                                  Or Open {selectedOption.label} without Amount Lock
+                                  <span>Open {selectedOption.label} (Manual ₹{cartTotal.toLocaleString('en-IN')})</span>
                                 </a>
                               </div>
                             </div>
@@ -1930,7 +1978,6 @@ export const CheckoutModal: React.FC = () => {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                               <a
                                 href={splitPart1Links[selectedPayment]}
-                                target="_top"
                                 rel="noopener noreferrer"
                                 onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} Part 1`)}
                                 className="h-10 px-3 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
@@ -1940,7 +1987,6 @@ export const CheckoutModal: React.FC = () => {
                               </a>
                               <a
                                 href={splitPart2Links[selectedPayment]}
-                                target="_top"
                                 rel="noopener noreferrer"
                                 onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} Part 2`)}
                                 className="h-10 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
