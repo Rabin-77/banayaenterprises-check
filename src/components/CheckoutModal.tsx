@@ -27,7 +27,8 @@ import {
   ChevronDown,
   ChevronUp,
   Split,
-  Info
+  Info,
+  QrCode
 } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -67,32 +68,35 @@ interface BankConfig {
   popular: boolean;
 }
 
+const BANAYA_QR_IMAGE = '/assets/aistudio/image_07be354a.png';
+
 const PAYMENT_OPTIONS: PaymentOptionConfig[] = [
-  {
-    id: 'netbanking',
-    label: 'Net Banking',
-    subtitle: 'All Indian banks supported — direct bank portal login',
-    tag: 'Direct Bank'
-  },
   {
     id: 'gpay',
     label: 'Google Pay',
-    subtitle: 'Pay securely using Google Pay'
+    subtitle: 'Pay using Google Pay App or Scan QR',
+    tag: 'Recommended'
   },
   {
     id: 'phonepe',
     label: 'PhonePe',
-    subtitle: 'Pay securely using PhonePe'
+    subtitle: 'Pay using PhonePe App or Scan QR'
   },
   {
     id: 'paytm',
     label: 'Paytm',
-    subtitle: 'Pay securely using Paytm'
+    subtitle: 'Pay using Paytm App or Scan QR'
   },
   {
     id: 'upi',
     label: 'UPI Payment',
-    subtitle: 'Pay using any UPI app (BHIM, CRED, Amazon Pay, WhatsApp Pay)'
+    subtitle: 'Scan Banaya QR or pay with any UPI App / UPI ID'
+  },
+  {
+    id: 'netbanking',
+    label: 'Net Banking',
+    subtitle: 'All Indian banks supported — direct bank portal login',
+    tag: 'Up to ₹10L'
   }
 ];
 
@@ -262,7 +266,7 @@ export const CheckoutModal: React.FC = () => {
   const [gatewaySessionId, setGatewaySessionId] = useState<string>('');
   const [gatewaySecondsLeft, setGatewaySecondsLeft] = useState<number>(600);
 
-  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('netbanking');
+  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('gpay');
   const [selectedBankId, setSelectedBankId] = useState<string>('sbi');
   const [customerUpiId, setCustomerUpiId] = useState<string>('');
 
@@ -366,35 +370,44 @@ export const CheckoutModal: React.FC = () => {
   const itemCount = cart.reduce((sum, it) => sum + it.quantity, 0);
 
   const encodedPayNote = encodeURIComponent('Banaya Enterprise Order');
-  const activeSessionRef = gatewaySessionId || `BNY${Date.now().toString().slice(-6)}`;
+  const isAndroidDevice = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  const isMobileDevice =
+    typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+  // Clean UPI Intent builder WITHOUT unsigned mode=02 & tr= parameters
+  // (Passing mode=02 + tr= without an aggregator RSA sign triggers bank "exceeded limit" blocks)
   const buildUpiIntentMap = (
-    amountInr: number,
-    refSuffix = ''
+    amountInr: number
   ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
     const safeAmount = Math.max(1, Number(amountInr) || 1).toFixed(2);
-    const txnRef = `${activeSessionRef}${refSuffix}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
-    const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tr=${txnRef}&tn=${encodedPayNote}&am=${safeAmount}&cu=INR&mode=02`;
-    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+    const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tn=${encodedPayNote}&am=${safeAmount}&cu=INR`;
     return {
-      gpay: isAndroid
+      gpay: isAndroidDevice
         ? `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end;`
         : `tez://upi/pay?${params}`,
-      phonepe: isAndroid
+      phonepe: isAndroidDevice
         ? `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end;`
         : `phonepe://pay?${params}`,
-      paytm: isAndroid
+      paytm: isAndroidDevice
         ? `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end;`
         : `paytmmp://pay?${params}`,
       upi: `upi://pay?${params}`
     };
   };
 
-  const gpayTezDirectUrl = (() => {
-    const safeAmount = Math.max(1, Number(cartTotal) || 1).toFixed(2);
-    const txnRef = `${activeSessionRef}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
-    return `tez://upi/pay?pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tr=${txnRef}&tn=${encodedPayNote}&am=${safeAmount}&cu=INR&mode=02`;
-  })();
+  // Safe Native App Launchers (opens exact app directly without browser intent amount block; copies UPI ID)
+  const appDirectOpenMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
+    gpay: isAndroidDevice
+      ? 'intent://#Intent;package=com.google.android.apps.nbu.paisa.user;scheme=tez;end;'
+      : 'tez://',
+    phonepe: isAndroidDevice
+      ? 'intent://#Intent;package=com.phonepe.app;scheme=phonepe;end;'
+      : 'phonepe://',
+    paytm: isAndroidDevice
+      ? 'intent://#Intent;package=net.one97.paytm;scheme=paytmmp;end;'
+      : 'paytmmp://',
+    upi: `upi://pay?pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&cu=INR`
+  };
 
   const canSplitPayment = cartTotal >= 20;
   const effectiveSplitFirst = canSplitPayment
@@ -403,8 +416,33 @@ export const CheckoutModal: React.FC = () => {
   const effectiveSplitSecond = Math.max(1, cartTotal - effectiveSplitFirst);
 
   const upiIntentMap = buildUpiIntentMap(cartTotal);
-  const splitPart1Links = buildUpiIntentMap(effectiveSplitFirst, 'P1');
-  const splitPart2Links = buildUpiIntentMap(effectiveSplitSecond, 'P2');
+  const splitPart1Links = buildUpiIntentMap(effectiveSplitFirst);
+  const splitPart2Links = buildUpiIntentMap(effectiveSplitSecond);
+
+  const handleLaunchPaymentApp = (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    appLabel: string
+  ) => {
+    void copyTextSafely(BANAYA_UPI_ID);
+    setCopiedVpa(true);
+    window.setTimeout(() => setCopiedVpa(false), 3000);
+
+    if (!isMobileDevice) {
+      e.preventDefault();
+      showToast(
+        'UPI ID Copied for Phone Payment',
+        `UPI ID (${BANAYA_UPI_ID}) copied! Scan the Banaya Enterprise QR code on screen using ${appLabel} on your phone.`,
+        'info'
+      );
+      return;
+    }
+
+    showToast(
+      `Opening ${appLabel}...`,
+      `UPI ID ${BANAYA_UPI_ID} copied. Pay ₹${cartTotal.toLocaleString('en-IN')} by pasting UPI ID or selecting the saved QR from Gallery.`,
+      'info'
+    );
+  };
 
   const activeOrderDisplay: Order | null = createdOrder
     ? {
@@ -418,7 +456,7 @@ export const CheckoutModal: React.FC = () => {
     setStep('details');
     setGatewayPhase('connecting');
     setGatewaySessionId('');
-    setSelectedPayment('netbanking');
+    setSelectedPayment('gpay');
     setSelectedBankId('sbi');
     setCustomerUpiId('');
     setTransactionIdInput('');
@@ -560,7 +598,9 @@ export const CheckoutModal: React.FC = () => {
       selectedPayment === 'netbanking'
         ? `Net Banking (${selectedBank.name})`
         : selectedPayment === 'upi'
-          ? `UPI (${customerUpiId.trim()})`
+          ? customerUpiId.trim()
+            ? `UPI (${customerUpiId.trim()})`
+            : `UPI QR (${BANAYA_UPI_ID})`
           : `${selectedOption.label} (${BANAYA_UPI_ID})`;
 
     const paymentMethodLabel = (
@@ -1065,13 +1105,13 @@ export const CheckoutModal: React.FC = () => {
 
                           {/* Expanded Payment Action Panel */}
                           {isSelected && (
-                            <div className="px-4 pb-5 pt-2 sm:pl-11 border-t border-slate-100 space-y-4">
+                            <div className="px-4 pb-5 pt-3 sm:pl-11 border-t border-slate-100 space-y-4">
                               {option.id === 'netbanking' ? (
                                 /* AMAZON / FLIPKART STYLE NET BANKING */
                                 <div className="space-y-4">
                                   <div>
                                     <div className="text-xs font-semibold text-slate-700 mb-2">
-                                      Popular Banks
+                                      Popular Banks (Supports ₹5L – ₹10L · Zero UPI Bank Cap)
                                     </div>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                                       {popularBanks.map((bank) => {
@@ -1138,7 +1178,7 @@ export const CheckoutModal: React.FC = () => {
                                       onClick={handleInitiateDirectPay}
                                       className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
                                     >
-                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')}</span>
+                                      <span>Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedBank.shortName}</span>
                                       <ArrowRight className="w-4 h-4" />
                                     </button>
                                     <span className="text-[11px] text-slate-500">
@@ -1146,63 +1186,273 @@ export const CheckoutModal: React.FC = () => {
                                     </span>
                                   </div>
                                 </div>
-                              ) : option.id === 'upi' ? (
-                                /* AMAZON / FLIPKART STYLE UPI ID ENTRY (NO QR CODE) */
-                                <div className="space-y-3 max-w-md">
-                                  <div>
-                                    <label
-                                      htmlFor="checkout-upi-id"
-                                      className="block text-xs font-semibold text-slate-700 mb-1"
-                                    >
-                                      Enter your UPI ID
-                                    </label>
-                                    <input
-                                      id="checkout-upi-id"
-                                      type="text"
-                                      value={customerUpiId}
-                                      onChange={(e) => setCustomerUpiId(e.target.value)}
-                                      placeholder="yourname@oksbi or yourname@ybl"
-                                      className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white font-mono text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
-                                    />
-                                    <p className="text-[11px] text-slate-500 mt-1">
-                                      The payment request will open securely in your UPI app.
-                                    </p>
-                                  </div>
-
-                                  <button
-                                    id="pay-upi-btn"
-                                    type="button"
-                                    onClick={handleInitiateDirectPay}
-                                    className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                  >
-                                    <span>Verify &amp; Pay ₹{cartTotal.toLocaleString('en-IN')}</span>
-                                    <ArrowRight className="w-4 h-4" />
-                                  </button>
-                                </div>
                               ) : (
-                                /* GOOGLE PAY / PHONEPE / PAYTM DIRECT PAY BUTTON (NO QR CODE) */
-                                <div className="space-y-3">
-                                  <p className="text-xs text-slate-600">
-                                    Clicking Pay will open <strong>{option.label}</strong> payment authorization for{' '}
-                                    <strong className="text-slate-900 tabular-nums">
-                                      ₹{cartTotal.toLocaleString('en-IN')}
-                                    </strong>
-                                    . You will return automatically to Banaya Enterprise after completing payment.
-                                  </p>
-                                  {cartTotal > 2000 && (
-                                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
-                                      Tip: Many banks cap browser UPI links at ₹2,000. If your app warns &ldquo;exceeded bank limit&rdquo;, use Manual UPI ID, Split Payment, or Net Banking on the next step.
-                                    </p>
-                                  )}
-                                  <button
-                                    id={`pay-${option.id}-btn`}
-                                    type="button"
-                                    onClick={handleInitiateDirectPay}
-                                    className="w-full sm:w-auto min-w-[230px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
-                                  >
-                                    <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
-                                    <ArrowRight className="w-4 h-4" />
-                                  </button>
+                                /* PROPER FLIPKART-STYLE QR + GPAY / PHONEPE / PAYTM / UPI PAYMENT SECTION */
+                                <div className="space-y-4">
+                                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                                    {/* Left Box: Official Banaya Enterprise QR Scanner */}
+                                    <div className="md:col-span-5 bg-white rounded-xl border border-slate-200 p-3.5 text-center space-y-2.5 shadow-2xs">
+                                      <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 border-b border-slate-100 pb-2">
+                                        <span className="inline-flex items-center gap-1 text-[#064E3B]">
+                                          <QrCode className="w-3.5 h-3.5" />
+                                          <span>Scan &amp; Pay QR</span>
+                                        </span>
+                                        <span className="font-mono text-slate-900 tabular-nums">
+                                          ₹{cartTotal.toLocaleString('en-IN')}
+                                        </span>
+                                      </div>
+
+                                      <div className="bg-slate-50 rounded-lg border border-slate-200 p-2 inline-block mx-auto">
+                                        <img
+                                          src={BANAYA_QR_IMAGE}
+                                          alt="Banaya Enterprise Official UPI QR Code"
+                                          className="w-44 h-44 sm:w-48 sm:h-48 object-contain mx-auto rounded"
+                                        />
+                                      </div>
+
+                                      <div className="space-y-1">
+                                        <div className="text-xs font-semibold text-slate-900">
+                                          Banaya Enterprise
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
+                                          className="w-full h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[11px] font-mono font-semibold text-slate-800 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                                        >
+                                          <span className="truncate">{BANAYA_UPI_ID}</span>
+                                          {copiedVpa ? (
+                                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                          ) : (
+                                            <Copy className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                          )}
+                                        </button>
+                                      </div>
+
+                                      <div className="flex items-center gap-1.5">
+                                        <a
+                                          href={BANAYA_QR_IMAGE}
+                                          download="Banaya-Enterprise-UPI-QR.png"
+                                          className="flex-1 h-8 px-2.5 rounded-md border border-emerald-700/30 bg-emerald-50 hover:bg-emerald-100 text-[#064E3B] text-[11px] font-semibold inline-flex items-center justify-center gap-1"
+                                        >
+                                          <Download className="w-3.5 h-3.5" />
+                                          <span>Save QR (Gallery Scan)</span>
+                                        </a>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
+                                          className="h-8 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                          title="Copy Payable Amount"
+                                        >
+                                          {copiedAmount ? (
+                                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                          ) : (
+                                            <Copy className="w-3.5 h-3.5" />
+                                          )}
+                                          <span>₹{cartTotal}</span>
+                                        </button>
+                                      </div>
+
+                                      <p className="text-[10px] text-slate-500 leading-snug">
+                                        Zero bank limit block: Scan QR with another phone or tap <strong>Save QR</strong> &amp; choose <em>Upload from Gallery</em> inside {option.label}.
+                                      </p>
+                                    </div>
+
+                                    {/* Right Box: Direct App Activation & Transaction Confirmation */}
+                                    <div className="md:col-span-7 space-y-3.5">
+                                      {option.id === 'upi' && (
+                                        <div>
+                                          <label
+                                            htmlFor="checkout-upi-id"
+                                            className="block text-xs font-semibold text-slate-700 mb-1"
+                                          >
+                                            Your UPI ID <span className="font-normal text-slate-400">(optional if scanning QR)</span>
+                                          </label>
+                                          <input
+                                            id="checkout-upi-id"
+                                            type="text"
+                                            value={customerUpiId}
+                                            onChange={(e) => setCustomerUpiId(e.target.value)}
+                                            placeholder="yourname@oksbi or yourname@ybl"
+                                            className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-white font-mono text-xs text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                                          />
+                                        </div>
+                                      )}
+
+                                      {/* Fixed App-Specific Launcher (Bypasses Bank Browser-Intent Limit) */}
+                                      <div className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-2.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="text-xs font-semibold text-slate-900">
+                                            Step 1: Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}
+                                          </span>
+                                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                            Direct App Link
+                                          </span>
+                                        </div>
+
+                                        {!splitMode ? (
+                                          <div className="space-y-2">
+                                            <a
+                                              id={`open-${option.id}-app-btn`}
+                                              href={appDirectOpenMap[option.id]}
+                                              onClick={(e) => handleLaunchPaymentApp(e, option.label)}
+                                              className="w-full h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shadow-2xs"
+                                            >
+                                              <Smartphone className="w-4 h-4" />
+                                              <span>
+                                                {option.id === 'upi'
+                                                  ? `Pay ₹${cartTotal.toLocaleString('en-IN')} via Any UPI App`
+                                                  : `Open ${option.label} App (Copies UPI ID)`}
+                                              </span>
+                                            </a>
+
+                                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                                              {option.id !== 'upi' && (
+                                                <a
+                                                  id={`pay-${option.id}-btn`}
+                                                  href={upiIntentMap[option.id]}
+                                                  onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Direct Pay`)}
+                                                  className="font-semibold text-[#064E3B] hover:underline inline-flex items-center gap-1"
+                                                >
+                                                  <span>Direct Intent Pay ₹{cartTotal.toLocaleString('en-IN')}</span>
+                                                  <ArrowRight className="w-3 h-3" />
+                                                </a>
+                                              )}
+                                              {canSplitPayment && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setSplitFirstAmount(Math.ceil(cartTotal / 2));
+                                                    setSplitMode(true);
+                                                  }}
+                                                  className="font-medium text-slate-600 hover:text-slate-900 inline-flex items-center gap-1 cursor-pointer"
+                                                >
+                                                  <Split className="w-3 h-3" />
+                                                  <span>Split Payment (2 Smaller Amounts)</span>
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-2.5 pt-1">
+                                            <div className="flex items-center justify-between text-[11px]">
+                                              <span className="font-semibold text-emerald-900">
+                                                Split into 2 Smaller Transfers
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => setSplitMode(false)}
+                                                className="text-slate-600 underline cursor-pointer"
+                                              >
+                                                Cancel Split
+                                              </button>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs">
+                                              <label htmlFor="inline-split-p1" className="text-slate-600">
+                                                Part 1 (₹):
+                                              </label>
+                                              <input
+                                                id="inline-split-p1"
+                                                type="number"
+                                                min={1}
+                                                max={cartTotal - 1}
+                                                value={effectiveSplitFirst}
+                                                onChange={(e) => {
+                                                  const val = Number(e.target.value) || 1;
+                                                  setSplitFirstAmount(Math.min(Math.max(1, val), cartTotal - 1));
+                                                }}
+                                                className="w-20 h-7 px-2 rounded border border-slate-300 font-mono text-xs text-slate-900"
+                                              />
+                                              <span className="text-slate-600">
+                                                + Part 2: <strong className="font-mono">₹{effectiveSplitSecond}</strong>
+                                              </span>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <a
+                                                href={splitPart1Links[option.id]}
+                                                onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Part 1`)}
+                                                className="h-9 px-2.5 rounded-lg bg-[#064E3B] text-white text-xs font-semibold inline-flex items-center justify-center gap-1"
+                                              >
+                                                <span>Pay ₹{effectiveSplitFirst}</span>
+                                              </a>
+                                              <a
+                                                href={splitPart2Links[option.id]}
+                                                onClick={(e) => handleLaunchPaymentApp(e, `${option.label} Part 2`)}
+                                                className="h-9 px-2.5 rounded-lg bg-slate-900 text-white text-xs font-semibold inline-flex items-center justify-center gap-1"
+                                              >
+                                                <span>Pay ₹{effectiveSplitSecond}</span>
+                                              </a>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        <p className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-2">
+                                          Why Scan QR / Paste UPI ID? Some banks show <em>&ldquo;exceeded bank limit&rdquo;</em> on direct browser payment links. Paying via the QR code above or pasting <code className="font-mono text-slate-800">{BANAYA_UPI_ID}</code> inside {option.label} uses your full ₹1,00,000 bank limit.
+                                        </p>
+                                      </div>
+
+                                      {/* Step 2 Inside Payment Option: Enter UTR & Confirm Payment */}
+                                      <form
+                                        onSubmit={handleCompleteGatewayAndReturn}
+                                        className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-3"
+                                      >
+                                        <div className="text-xs font-semibold text-slate-900">
+                                          Step 2: Enter {option.label} Transaction ID / UTR
+                                        </div>
+
+                                        <div className={splitMode && canSplitPayment ? 'grid grid-cols-1 sm:grid-cols-2 gap-2.5' : ''}>
+                                          <div>
+                                            <input
+                                              id={`utr-input-${option.id}`}
+                                              type="text"
+                                              required
+                                              value={transactionIdInput}
+                                              onChange={(e) => setTransactionIdInput(e.target.value)}
+                                              placeholder={
+                                                splitMode && canSplitPayment
+                                                  ? `Part 1 UTR (₹${effectiveSplitFirst})`
+                                                  : 'Enter 12-digit UPI Transaction ID / UTR'
+                                              }
+                                              className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-xs sm:text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                                            />
+                                          </div>
+                                          {splitMode && canSplitPayment && (
+                                            <div>
+                                              <input
+                                                id={`utr-input-2-${option.id}`}
+                                                type="text"
+                                                required
+                                                value={splitSecondTxnId}
+                                                onChange={(e) => setSplitSecondTxnId(e.target.value)}
+                                                placeholder={`Part 2 UTR (₹${effectiveSplitSecond})`}
+                                                className="w-full h-10 px-3 rounded-lg border border-slate-300 font-mono text-xs sm:text-sm text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-hidden focus:border-[#064E3B]"
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        <label className="flex items-start gap-2 text-[11px] text-slate-700 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={paymentConfirmedCheck}
+                                            onChange={(e) => setPaymentConfirmedCheck(e.target.checked)}
+                                            className="mt-0.5 w-3.5 h-3.5 accent-[#064E3B] cursor-pointer shrink-0"
+                                          />
+                                          <span>
+                                            I have completed the <strong>₹{cartTotal.toLocaleString('en-IN')}</strong> transfer to <strong>Banaya Enterprise</strong> via {option.label}.
+                                          </span>
+                                        </label>
+
+                                        <button
+                                          id={`submit-${option.id}-payment-btn`}
+                                          type="submit"
+                                          className="w-full h-11 px-5 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                        >
+                                          <span>Submit Payment Confirmation (₹{cartTotal.toLocaleString('en-IN')})</span>
+                                          <ArrowRight className="w-4 h-4" />
+                                        </button>
+                                      </form>
+                                    </div>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -1430,22 +1680,36 @@ export const CheckoutModal: React.FC = () => {
                           </a>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-2 text-xs">
-                          <label htmlFor="gateway-bank-select" className="font-medium text-slate-700">
-                            Change Bank:
-                          </label>
-                          <select
-                            id="gateway-bank-select"
-                            value={selectedBankId}
-                            onChange={(e) => setSelectedBankId(e.target.value)}
-                            className="h-8 px-2.5 rounded-md border border-slate-300 bg-white text-xs text-slate-900"
+                        <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label htmlFor="gateway-bank-select" className="font-medium text-slate-700">
+                              Change Bank:
+                            </label>
+                            <select
+                              id="gateway-bank-select"
+                              value={selectedBankId}
+                              onChange={(e) => setSelectedBankId(e.target.value)}
+                              className="h-8 px-2.5 rounded-md border border-slate-300 bg-white text-xs text-slate-900"
+                            >
+                              {INDIAN_BANKS.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPayment('gpay');
+                              setStep('payment');
+                            }}
+                            className="text-[11px] font-semibold text-[#064E3B] hover:underline inline-flex items-center gap-1 cursor-pointer"
                           >
-                            {INDIAN_BANKS.map((b) => (
-                              <option key={b.id} value={b.id}>
-                                {b.name}
-                              </option>
-                            ))}
-                          </select>
+                            <QrCode className="w-3.5 h-3.5" />
+                            <span>Prefer Scan QR / Google Pay / PhonePe?</span>
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -1467,20 +1731,20 @@ export const CheckoutModal: React.FC = () => {
 
                               <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
                                 <a
-                                  href={upiIntentMap[selectedPayment]}
+                                  href={appDirectOpenMap[selectedPayment]}
+                                  onClick={(e) => handleLaunchPaymentApp(e, selectedOption.label)}
                                   className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
                                 >
                                   <Smartphone className="w-4 h-4" />
                                   <span>Open {selectedOption.label} App</span>
                                 </a>
-                                {selectedPayment === 'gpay' && (
-                                  <a
-                                    href={gpayTezDirectUrl}
-                                    className="text-[11px] font-medium text-[#064E3B] hover:underline text-center sm:text-right"
-                                  >
-                                    Alternate Google Pay Link (Tez)
-                                  </a>
-                                )}
+                                <a
+                                  href={upiIntentMap[selectedPayment]}
+                                  onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} Direct Pay`)}
+                                  className="text-[11px] font-medium text-[#064E3B] hover:underline text-center sm:text-right"
+                                >
+                                  Direct Pre-filled Pay Link (₹{cartTotal.toLocaleString('en-IN')})
+                                </a>
                               </div>
                             </div>
                           </div>
