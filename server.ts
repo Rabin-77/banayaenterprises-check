@@ -1246,6 +1246,140 @@ async function startServer(): Promise<void> {
     }
   });
 
+  // Payment Gateway Configuration (Razorpay Signed UPI / NetBanking when configured)
+  const getRazorpayCredentials = () => {
+    const keyId = sanitizeEnvSecret(process.env.RAZORPAY_KEY_ID);
+    const keySecret = sanitizeEnvSecret(process.env.RAZORPAY_KEY_SECRET);
+    if (!keyId || !keySecret || keyId === 'MY_RAZORPAY_KEY_ID') {
+      return null;
+    }
+    return { keyId, keySecret };
+  };
+
+  app.get('/api/payments/config', (_req: Request, res: Response) => {
+    const creds = getRazorpayCredentials();
+    res.json({
+      razorpayEnabled: Boolean(creds),
+      keyId: creds ? creds.keyId : null,
+      mode: creds ? 'razorpay' : 'direct'
+    });
+  });
+
+  app.post('/api/payments/razorpay/create-order', async (req: Request, res: Response) => {
+    try {
+      const creds = getRazorpayCredentials();
+      if (!creds) {
+        res.status(503).json({ error: 'Signed payment gateway keys not configured' });
+        return;
+      }
+
+      const { amountInr, receipt, customerName, phone, email } = req.body as {
+        amountInr?: number;
+        receipt?: string;
+        customerName?: string;
+        phone?: string;
+        email?: string;
+      };
+
+      const parsedAmount = Math.round(Number(amountInr) || 0);
+      if (parsedAmount < 1 || parsedAmount > 1_000_000) {
+        res.status(400).json({ error: 'Invalid payment amount' });
+        return;
+      }
+
+      const authHeader = Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
+      const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          amount: parsedAmount * 100,
+          currency: 'INR',
+          receipt: String(receipt || `BNY-${Date.now()}`).slice(0, 40),
+          notes: {
+            merchant: 'Banaya Enterprise',
+            customerName: String(customerName || '').slice(0, 80),
+            phone: String(phone || '').slice(0, 30),
+            email: String(email || '').slice(0, 80)
+          }
+        })
+      });
+
+      const rzpData = (await rzpRes.json()) as {
+        id?: string;
+        amount?: number;
+        currency?: string;
+        error?: { description?: string };
+      };
+
+      if (!rzpRes.ok || !rzpData.id) {
+        res.status(502).json({
+          error: rzpData.error?.description || 'Failed to initialize payment gateway order'
+        });
+        return;
+      }
+
+      res.json({
+        orderId: rzpData.id,
+        amount: rzpData.amount,
+        currency: rzpData.currency || 'INR',
+        keyId: creds.keyId
+      });
+    } catch (err) {
+      console.error('Razorpay create-order error:', err);
+      res.status(500).json({ error: 'Failed to initialize gateway payment order' });
+    }
+  });
+
+  app.post('/api/payments/razorpay/verify', (req: Request, res: Response) => {
+    try {
+      const creds = getRazorpayCredentials();
+      if (!creds) {
+        res.status(503).json({ verified: false, error: 'Gateway keys not configured' });
+        return;
+      }
+
+      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body as {
+        razorpay_order_id?: string;
+        razorpay_payment_id?: string;
+        razorpay_signature?: string;
+      };
+
+      if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        res.status(400).json({ verified: false, error: 'Missing payment verification signature fields' });
+        return;
+      }
+
+      const expectedHex = crypto
+        .createHmac('sha256', creds.keySecret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
+
+      const expectedBuf = Buffer.from(expectedHex, 'utf8');
+      const providedBuf = Buffer.from(String(razorpay_signature), 'utf8');
+
+      const isValid =
+        expectedBuf.length === providedBuf.length &&
+        crypto.timingSafeEqual(expectedBuf, providedBuf);
+
+      if (!isValid) {
+        res.status(400).json({ verified: false, error: 'Payment signature mismatch' });
+        return;
+      }
+
+      res.json({
+        verified: true,
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id
+      });
+    } catch (err) {
+      console.error('Razorpay verify error:', err);
+      res.status(500).json({ verified: false, error: 'Signature verification error' });
+    }
+  });
+
   if (!isProduction) {
     // Serve a clean no-HMR client shim so Vite never opens failing WebSockets behind reverse proxies
     app.get('/@vite/client', (_req: Request, res: Response) => {
