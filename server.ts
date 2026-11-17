@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import nodemailer from 'nodemailer';
+import nodemailer, { type SendMailOptions } from 'nodemailer';
 import { sortCatalogByCanonicalOrder } from './src/utils/catalogOrder';
 import { DEFAULT_MEDIA_FOLDERS } from './src/data/defaultMediaFolders';
 import type { MediaFolder, MediaFolderImage } from './src/types';
@@ -103,13 +103,47 @@ const DEFAULT_PRODUCTS_PATH = path.join(ROOT_DIR, 'src', 'data', 'products.json'
 const ADMIN_PASSKEY = process.env.ADMIN_PASSKEY || 'banayana00123';
 const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL || 'banayaenterprise100@gmail.com';
 
-function getSmtpTransporter() {
-  const user = (process.env.SMTP_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || '').trim();
-  if (!user || !pass) return null;
+interface SmtpRuntimeStatus {
+  verified: boolean | null;
+  authError: string | null;
+  checkedCredentialHash: string;
+}
 
-  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+const smtpRuntimeStatus: SmtpRuntimeStatus = {
+  verified: null,
+  authError: null,
+  checkedCredentialHash: ''
+};
+
+function sanitizeEnvSecret(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function getSmtpTransporter() {
+  const user = sanitizeEnvSecret(process.env.SMTP_USER);
+  let pass = sanitizeEnvSecret(process.env.SMTP_PASS);
+  const host = (sanitizeEnvSecret(process.env.SMTP_HOST) || 'smtp.gmail.com').trim();
   const port = Number(process.env.SMTP_PORT) || 465;
+
+  if (!user || !pass || pass === 'MY_SMTP_PASS') return null;
+  if (host.toLowerCase().includes('gmail')) {
+    pass = pass.replace(/\s+/g, '');
+  }
+
+  const credHash = crypto.createHash('sha256').update(`${host}:${port}:${user}:${pass}`).digest('hex').slice(0, 16);
+  if (smtpRuntimeStatus.checkedCredentialHash !== credHash) {
+    smtpRuntimeStatus.verified = null;
+    smtpRuntimeStatus.authError = null;
+    smtpRuntimeStatus.checkedCredentialHash = credHash;
+  }
+
   return {
     user,
     transporter: nodemailer.createTransport({
@@ -119,6 +153,57 @@ function getSmtpTransporter() {
       auth: { user, pass }
     })
   };
+}
+
+function formatSmtpAuthHint(err: unknown): string {
+  const rawMessage = err instanceof Error ? err.message : String(err || '');
+  const code = (err as { code?: string; responseCode?: number } | null)?.code || '';
+  const responseCode = (err as { responseCode?: number } | null)?.responseCode;
+
+  if (
+    responseCode === 535 ||
+    code === 'EAUTH' ||
+    rawMessage.includes('535') ||
+    rawMessage.toLowerCase().includes('username and password not accepted')
+  ) {
+    return 'Gmail rejected SMTP_PASS (535-5.7.8): Google requires a 16-character App Password (from Google Account -> Security -> 2-Step Verification -> App Passwords), not your regular Gmail password.';
+  }
+  return 'SMTP server connection unavailable; real-time portal alerts & 1-click Email/WhatsApp remain active.';
+}
+
+async function ensureSmtpReady(smtp: NonNullable<ReturnType<typeof getSmtpTransporter>>): Promise<boolean> {
+  if (smtpRuntimeStatus.verified === true) return true;
+  if (smtpRuntimeStatus.verified === false) return false;
+
+  try {
+    await smtp.transporter.verify();
+    smtpRuntimeStatus.verified = true;
+    smtpRuntimeStatus.authError = null;
+    return true;
+  } catch (err) {
+    smtpRuntimeStatus.verified = false;
+    smtpRuntimeStatus.authError = formatSmtpAuthHint(err);
+    console.info('[SMTP Notice]', smtpRuntimeStatus.authError);
+    return false;
+  }
+}
+
+async function trySendSmtpMail(
+  smtp: NonNullable<ReturnType<typeof getSmtpTransporter>>,
+  mailOptions: SendMailOptions
+): Promise<boolean> {
+  if (smtpRuntimeStatus.verified === false) return false;
+  try {
+    await smtp.transporter.sendMail(mailOptions);
+    smtpRuntimeStatus.verified = true;
+    smtpRuntimeStatus.authError = null;
+    return true;
+  } catch (err) {
+    smtpRuntimeStatus.verified = false;
+    smtpRuntimeStatus.authError = formatSmtpAuthHint(err);
+    console.info('[SMTP Notice]', smtpRuntimeStatus.authError);
+    return false;
+  }
 }
 
 function escapeServerHtml(raw: string): string {
@@ -1007,10 +1092,16 @@ async function startServer(): Promise<void> {
   });
 
   // Check notification / SMTP delivery capability
-  app.get('/api/notifications/status', (_req: Request, res: Response) => {
+  app.get('/api/notifications/status', async (_req: Request, res: Response) => {
     const smtp = getSmtpTransporter();
+    let smtpReady = false;
+    if (smtp) {
+      smtpReady = await ensureSmtpReady(smtp);
+    }
     res.json({
-      smtpConfigured: Boolean(smtp),
+      smtpConfigured: smtpReady,
+      smtpCredentialsPresent: Boolean(smtp),
+      smtpAuthError: smtp ? smtpRuntimeStatus.authError : null,
       adminAlertEmail: ADMIN_ALERT_EMAIL,
       recentDispatches: (storeState.receiptLogs || []).slice(0, 20)
     });
@@ -1032,32 +1123,26 @@ async function startServer(): Promise<void> {
       let adminEmailSent = false;
       let customerEmailSent = false;
       const smtp = getSmtpTransporter();
+      let smtpReady = false;
 
       if (smtp) {
-        const html = buildServerReceiptHtml(normalizedOrder, false);
-        try {
-          await smtp.transporter.sendMail({
+        smtpReady = await ensureSmtpReady(smtp);
+        if (smtpReady) {
+          const html = buildServerReceiptHtml(normalizedOrder, false);
+          adminEmailSent = await trySendSmtpMail(smtp, {
             from: `"Banaya Enterprises Orders" <${smtp.user}>`,
             to: ADMIN_ALERT_EMAIL,
             subject: `[Admin Alert] New Order & Payment Receipt ${receiptNumber} (₹${normalizedOrder.totalAmount})`,
             html
           });
-          adminEmailSent = true;
-        } catch (mailErr) {
-          console.warn('Admin receipt email dispatch failed:', mailErr);
-        }
 
-        if (normalizedOrder.email && normalizedOrder.email.includes('@')) {
-          try {
-            await smtp.transporter.sendMail({
+          if (adminEmailSent && normalizedOrder.email && normalizedOrder.email.includes('@')) {
+            customerEmailSent = await trySendSmtpMail(smtp, {
               from: `"Banaya Enterprises" <${smtp.user}>`,
               to: normalizedOrder.email,
               subject: `Order & Payment Receipt ${receiptNumber} — Banaya Enterprises`,
               html
             });
-            customerEmailSent = true;
-          } catch (mailErr) {
-            console.warn('Customer receipt email dispatch failed:', mailErr);
           }
         }
       }
@@ -1081,7 +1166,8 @@ async function startServer(): Promise<void> {
       res.status(201).json({
         ok: true,
         receiptNumber,
-        smtpConfigured: Boolean(smtp),
+        smtpConfigured: Boolean(smtp && smtpRuntimeStatus.verified === true),
+        smtpAuthError: smtp ? smtpRuntimeStatus.authError : null,
         adminEmailSent,
         customerEmailSent,
         portalAlertRecorded: true
@@ -1108,30 +1194,25 @@ async function startServer(): Promise<void> {
       const smtp = getSmtpTransporter();
 
       if (smtp) {
-        const html = buildServerReceiptHtml(normalizedOrder, true);
-        if (normalizedOrder.email && normalizedOrder.email.includes('@')) {
-          try {
-            await smtp.transporter.sendMail({
+        const smtpReady = await ensureSmtpReady(smtp);
+        if (smtpReady) {
+          const html = buildServerReceiptHtml(normalizedOrder, true);
+          if (normalizedOrder.email && normalizedOrder.email.includes('@')) {
+            customerEmailSent = await trySendSmtpMail(smtp, {
               from: `"Banaya Enterprises" <${smtp.user}>`,
               to: normalizedOrder.email,
               subject: `Order Confirmed & Payment Verified (${normalizedOrder.id} / ${receiptNumber})`,
               html
             });
-            customerEmailSent = true;
-          } catch (mailErr) {
-            console.warn('Customer confirmation email failed:', mailErr);
           }
-        }
-        try {
-          await smtp.transporter.sendMail({
-            from: `"Banaya Enterprises Orders" <${smtp.user}>`,
-            to: ADMIN_ALERT_EMAIL,
-            subject: `[Order Confirmed] ${normalizedOrder.id} (${receiptNumber}) — Status: ${normalizedOrder.status}`,
-            html
-          });
-          adminEmailSent = true;
-        } catch (mailErr) {
-          console.warn('Admin confirmation copy failed:', mailErr);
+          if (smtpRuntimeStatus.verified !== false) {
+            adminEmailSent = await trySendSmtpMail(smtp, {
+              from: `"Banaya Enterprises Orders" <${smtp.user}>`,
+              to: ADMIN_ALERT_EMAIL,
+              subject: `[Order Confirmed] ${normalizedOrder.id} (${receiptNumber}) — Status: ${normalizedOrder.status}`,
+              html
+            });
+          }
         }
       }
 
@@ -1154,7 +1235,8 @@ async function startServer(): Promise<void> {
       res.json({
         ok: true,
         receiptNumber,
-        smtpConfigured: Boolean(smtp),
+        smtpConfigured: Boolean(smtp && smtpRuntimeStatus.verified === true),
+        smtpAuthError: smtp ? smtpRuntimeStatus.authError : null,
         adminEmailSent,
         customerEmailSent
       });

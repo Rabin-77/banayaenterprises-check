@@ -92,7 +92,7 @@ const PAYMENT_OPTIONS: PaymentOptionConfig[] = [
   {
     id: 'upi',
     label: 'UPI Payment',
-    subtitle: 'Pay using your UPI ID (BHIM, CRED, Amazon Pay, WhatsApp)'
+    subtitle: 'Pay using any UPI app (BHIM, CRED, Amazon Pay, WhatsApp Pay)'
   }
 ];
 
@@ -375,13 +375,26 @@ export const CheckoutModal: React.FC = () => {
     const safeAmount = Math.max(1, Number(amountInr) || 1).toFixed(2);
     const txnRef = `${activeSessionRef}${refSuffix}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
     const params = `pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tr=${txnRef}&tn=${encodedPayNote}&am=${safeAmount}&cu=INR&mode=02`;
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
     return {
-      gpay: `upi://pay?${params}`,
-      phonepe: `phonepe://pay?${params}`,
-      paytm: `paytmmp://pay?${params}`,
+      gpay: isAndroid
+        ? `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end;`
+        : `tez://upi/pay?${params}`,
+      phonepe: isAndroid
+        ? `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end;`
+        : `phonepe://pay?${params}`,
+      paytm: isAndroid
+        ? `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end;`
+        : `paytmmp://pay?${params}`,
       upi: `upi://pay?${params}`
     };
   };
+
+  const gpayTezDirectUrl = (() => {
+    const safeAmount = Math.max(1, Number(cartTotal) || 1).toFixed(2);
+    const txnRef = `${activeSessionRef}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
+    return `tez://upi/pay?pa=${BANAYA_UPI_ID}&pn=Banaya%20Enterprise&tr=${txnRef}&tn=${encodedPayNote}&am=${safeAmount}&cu=INR&mode=02`;
+  })();
 
   const canSplitPayment = cartTotal >= 20;
   const effectiveSplitFirst = canSplitPayment
@@ -1452,13 +1465,23 @@ export const CheckoutModal: React.FC = () => {
                                 </p>
                               </div>
 
-                              <a
-                                href={upiIntentMap[selectedPayment]}
-                                className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
-                              >
-                                <Smartphone className="w-4 h-4" />
-                                <span>Open {selectedOption.label} App</span>
-                              </a>
+                              <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
+                                <a
+                                  href={upiIntentMap[selectedPayment]}
+                                  className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
+                                >
+                                  <Smartphone className="w-4 h-4" />
+                                  <span>Open {selectedOption.label} App</span>
+                                </a>
+                                {selectedPayment === 'gpay' && (
+                                  <a
+                                    href={gpayTezDirectUrl}
+                                    className="text-[11px] font-medium text-[#064E3B] hover:underline text-center sm:text-right"
+                                  >
+                                    Alternate Google Pay Link (Tez)
+                                  </a>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ) : (

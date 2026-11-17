@@ -150,6 +150,7 @@ interface ShopContextType {
   adminAlerts: AdminAlertRecord[];
   unreadAlertsCount: number;
   smtpEmailConfigured: boolean;
+  smtpAuthError: string | null;
   acknowledgeAdminAlert: (orderId: string) => void;
   markCustomerNotified: (orderId: string) => void;
 
@@ -365,6 +366,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [canAttemptFirstTimeSetup, setCanAttemptFirstTimeSetup] = useState<boolean>(false);
   const [adminAlerts, setAdminAlerts] = useState<AdminAlertRecord[]>([]);
   const [smtpEmailConfigured, setSmtpEmailConfigured] = useState<boolean>(false);
+  const [smtpAuthError, setSmtpAuthError] = useState<string | null>(null);
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const seededCollectionsRef = useRef<boolean>(false);
@@ -1047,9 +1049,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     void fetch('/api/notifications/status')
       .then((res) => (res.ok ? res.json() : null))
-      .then((info: { smtpConfigured?: boolean } | null) => {
+      .then((info: { smtpConfigured?: boolean; smtpAuthError?: string | null } | null) => {
         if (info && typeof info.smtpConfigured === 'boolean') {
           setSmtpEmailConfigured(info.smtpConfigured);
+        }
+        if (info && 'smtpAuthError' in info) {
+          setSmtpAuthError(info.smtpAuthError || null);
         }
       })
       .catch(() => {
@@ -1407,9 +1412,19 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newOrder)
-    }).catch(() => {
-      // Static deployments rely on Firestore real-time adminAlerts listener
-    });
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { smtpConfigured?: boolean; smtpAuthError?: string | null } | null) => {
+        if (data && typeof data.smtpConfigured === 'boolean') {
+          setSmtpEmailConfigured(data.smtpConfigured);
+        }
+        if (data && 'smtpAuthError' in data) {
+          setSmtpAuthError(data.smtpAuthError || null);
+        }
+      })
+      .catch(() => {
+        // Static deployments rely on Firestore real-time adminAlerts listener
+      });
 
     return newOrder;
   };
@@ -1882,9 +1897,19 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updatedOrderObj)
-        }).catch(() => {
-          // Live /orderStatus snapshot still pushes confirmation straight to customer UI
-        });
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data: { smtpConfigured?: boolean; smtpAuthError?: string | null } | null) => {
+            if (data && typeof data.smtpConfigured === 'boolean') {
+              setSmtpEmailConfigured(data.smtpConfigured);
+            }
+            if (data && 'smtpAuthError' in data) {
+              setSmtpAuthError(data.smtpAuthError || null);
+            }
+          })
+          .catch(() => {
+            // Live /orderStatus snapshot still pushes confirmation straight to customer UI
+          });
       }
     }
 
@@ -2044,6 +2069,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminAlerts,
         unreadAlertsCount,
         smtpEmailConfigured,
+        smtpAuthError,
         acknowledgeAdminAlert,
         markCustomerNotified,
         getEffectivePrice,

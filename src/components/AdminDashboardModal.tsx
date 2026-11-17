@@ -102,6 +102,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     adminAlerts,
     unreadAlertsCount,
     smtpEmailConfigured,
+    smtpAuthError,
     acknowledgeAdminAlert,
     markCustomerNotified,
     showToast
@@ -1152,9 +1153,31 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                     <span className="text-[11px] text-slate-500">
                       {smtpEmailConfigured
                         ? `Auto-SMTP Email Active (${BANAYA_CONTACT_EMAIL})`
-                        : `Portal Real-Time Alerts Active · Target: ${BANAYA_CONTACT_EMAIL}`}
+                        : smtpAuthError
+                          ? `Gmail App Password Needed · Portal Alerts Active (${BANAYA_CONTACT_EMAIL})`
+                          : `Portal Real-Time Alerts Active · Target: ${BANAYA_CONTACT_EMAIL}`}
                     </span>
                   </div>
+
+                  {smtpAuthError && (
+                    <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                        <p className="leading-relaxed">
+                          <span className="font-semibold">Auto-Email paused:</span> {smtpAuthError} Real-time portal alerts, live customer tracking, and 1-click Email/WhatsApp receipt dispatch remain active.
+                        </p>
+                      </div>
+                      <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-900 font-medium hover:bg-amber-100/70 shrink-0"
+                      >
+                        <span>Get App Password</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
 
                   {adminAlerts.length > 0 ? (
                     <div className="divide-y divide-slate-200">
@@ -1824,22 +1847,45 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             {activeTab === 'orders' && (
               <div className="space-y-4">
                 {/* Admin Receipt Dispatch & Unread Alerts Summary */}
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <BellRing className={`w-4 h-4 shrink-0 ${unreadAlertsCount > 0 ? 'text-amber-600' : 'text-emerald-700'}`} />
-                    <div>
+                <div
+                  className={`rounded-lg border p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs ${
+                    smtpAuthError
+                      ? 'border-amber-200 bg-amber-50/70'
+                      : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                    <BellRing
+                      className={`w-4 h-4 shrink-0 mt-0.5 ${
+                        smtpAuthError || unreadAlertsCount > 0 ? 'text-amber-600' : 'text-emerald-700'
+                      }`}
+                    />
+                    <div className="space-y-1 min-w-0">
                       <strong className="text-slate-900 block">
                         Automatic Admin &amp; Customer Receipt Desk ({BANAYA_CONTACT_EMAIL})
                       </strong>
-                      <span className="text-slate-600">
+                      <span className="text-slate-700 block leading-relaxed">
                         {smtpEmailConfigured
                           ? 'Auto-SMTP email dispatch is active for both admin alerts and verified customer receipts.'
-                          : 'Real-time Admin Portal alerts & customer tracking sync are active. Configure SMTP_USER/SMTP_PASS env secrets to also push automated Gmail emails, or use 1-click Receipt Email below.'}
+                          : smtpAuthError
+                            ? `${smtpAuthError} Real-time portal alerts, live customer tracking, and 1-click Receipt Email/WhatsApp below remain fully operational.`
+                            : 'Real-time Admin Portal alerts & customer tracking sync are active. Configure SMTP_USER/SMTP_PASS env secrets to also push automated Gmail emails, or use 1-click Receipt Email below.'}
                       </span>
+                      {smtpAuthError && (
+                        <a
+                          href="https://myaccount.google.com/apppasswords"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-[#1B3624] font-semibold hover:underline"
+                        >
+                          <span>Create 16-character Google App Password</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
                     </div>
                   </div>
                   {unreadAlertsCount > 0 && (
-                    <span className="px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-amber-900 font-semibold tabular-nums">
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-amber-900 font-semibold tabular-nums shrink-0">
                       {unreadAlertsCount} New Payment Alert{unreadAlertsCount > 1 ? 's' : ''}
                     </span>
                   )}
