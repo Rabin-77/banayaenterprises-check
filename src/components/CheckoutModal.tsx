@@ -637,7 +637,14 @@ export const CheckoutModal: React.FC = () => {
             name: name.trim(),
             email: email.trim(),
             contact: phone.trim(),
-            method: selectedPayment === 'netbanking' ? 'netbanking' : 'upi'
+            method: selectedPayment === 'netbanking' ? 'netbanking' : 'upi',
+            ...(selectedPayment === 'upi' && customerUpiId.trim()
+              ? { vpa: customerUpiId.trim() }
+              : {})
+          },
+          notes: {
+            store: 'Banaya Enterprise',
+            selected_option: selectedOption.label
           },
           theme: { color: '#064E3B' },
           handler: async (response: RazorpaySuccessPayload) => {
@@ -1495,6 +1502,12 @@ export const CheckoutModal: React.FC = () => {
                                       </>
                                     )}
                                   </button>
+                                  <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                                    <span>
+                                      We never ask for your UPI PIN here. Your UPI app shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
+                                    </span>
+                                  </p>
                                 </div>
                               ) : (
                                 /* CLEAN FLIPKART / AMAZON STYLE GOOGLE PAY / PHONEPE / PAYTM DIRECT PAY (ZERO QR CODE) */
@@ -1522,6 +1535,12 @@ export const CheckoutModal: React.FC = () => {
                                       </>
                                     )}
                                   </button>
+                                  <p className="text-[11px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0 mt-0.5" />
+                                    <span>
+                                      We never ask for your UPI PIN here. {option.label} shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
+                                    </span>
+                                  </p>
                                 </div>
                               )}
                             </div>
@@ -1933,16 +1952,16 @@ export const CheckoutModal: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Bank Limit Exceeded / Browser UPI Block Recovery Box */}
+                        {/* Bank Limit Exceeded / UPI App Security Warning Recovery Box */}
                         <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3 text-xs">
                           <div className="flex items-start gap-2.5">
                             <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                             <div className="space-y-1">
                               <h5 className="font-semibold text-amber-950">
-                                Saw &ldquo;Your money has not been debited / Exceeded bank limit&rdquo;?
+                                Saw &ldquo;Exceeded bank limit&rdquo; or &ldquo;Never enter your UPI PIN to receive money&rdquo;?
                               </h5>
                               <p className="text-amber-900 leading-relaxed">
-                                Indian banks block browser UPI links carrying an amount unless routed via a signed merchant gateway, or when your daily bank cap is hit. Your account was <strong>not debited</strong>. Use any instant option below:
+                                <strong>Why this happens:</strong> UPI apps always show the NPCI safety notice (&ldquo;Never enter your UPI PIN to receive money&rdquo;) on PIN screens — you are <strong>sending payment</strong> for your order, never receiving money. Also, Indian banks block browser UPI links carrying an amount unless routed via a signed merchant gateway, and your account was <strong>not debited</strong>. Use any instant option below:
                               </p>
                             </div>
                           </div>
