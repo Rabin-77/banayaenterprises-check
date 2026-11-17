@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { 
-  X, Package, Award, Sparkles, Truck, MessageCircle
+  X, Package, Award, Sparkles, Truck, MessageCircle, Download
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { getOrderWhatsAppUrl, openWhatsAppUrl } from '../utils/whatsapp';
 import { getPriceForProductWeight } from '../utils/pricing';
+import { downloadOrderReceipt, formatReceiptNumber } from '../utils/receipt';
 
 export const AccountModal: React.FC = () => {
   const { 
@@ -165,6 +166,8 @@ export const AccountModal: React.FC = () => {
                     {/* Tracking & WhatsApp Actions */}
                     <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <span className="text-[11px] text-slate-500">
+                        Receipt: <strong className="font-mono text-slate-800">{order.receiptNumber || formatReceiptNumber(order.id)}</strong>
+                        {' · '}
                         Tracking: <strong className="font-mono text-emerald-800">{order.trackingNumber}</strong>
                         {(order.transactionId || order.bankRef) && (
                           <span className="ml-2">
@@ -172,8 +175,17 @@ export const AccountModal: React.FC = () => {
                           </span>
                         )}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
+                          type="button"
+                          onClick={() => downloadOrderReceipt(order)}
+                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                          title="Download official HTML receipt"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Receipt
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             const url = getOrderWhatsAppUrl(order);
                             openWhatsAppUrl(url);
@@ -184,6 +196,7 @@ export const AccountModal: React.FC = () => {
                           <MessageCircle className="w-3.5 h-3.5 fill-[#25D366] text-[#25D366]" /> Send to WhatsApp
                         </button>
                         <button
+                          type="button"
                           onClick={() => openOrderTracking(order.id)}
                           className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                         >

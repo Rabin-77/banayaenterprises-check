@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
-import { ArrowRight, CheckCircle2, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ExternalLink, Mail, MapPin, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { ScrollReveal } from './ScrollReveal';
+import {
+  BANAYA_CONTACT_EMAIL,
+  BANAYA_COORDINATES_LABEL,
+  BANAYA_MAPS_URL,
+  BANAYA_STORE_NAME,
+} from '../config/storeContact';
 
 export const AboutSection: React.FC = () => {
   const [showStoryModal, setShowStoryModal] = useState(false);
@@ -92,8 +98,59 @@ export const AboutSection: React.FC = () => {
               </div>
             </div>
 
-            {/* Learn More Button */}
-            <div className="pt-4">
+            {/* Store Location & Official Email Card */}
+            <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-xs space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/70 flex items-center justify-center shrink-0">
+                    <MapPin className="w-4 h-4 text-[#064E3B]" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+                      Our Location
+                    </span>
+                    <p className="text-xs sm:text-sm font-semibold text-slate-900">
+                      {BANAYA_STORE_NAME}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {BANAYA_COORDINATES_LABEL}
+                    </p>
+                    <a
+                      href={BANAYA_MAPS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-900 mt-1.5 transition-colors"
+                    >
+                      <span>Open in Google Maps</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/70 flex items-center justify-center shrink-0">
+                    <Mail className="w-4 h-4 text-[#064E3B]" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+                      Official Email
+                    </span>
+                    <a
+                      href={`mailto:${BANAYA_CONTACT_EMAIL}`}
+                      className="text-xs sm:text-sm font-semibold text-slate-900 hover:text-emerald-700 break-all transition-colors block mt-0.5"
+                    >
+                      {BANAYA_CONTACT_EMAIL}
+                    </a>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                      Direct Customer & Order Support
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Learn More & Maps Actions */}
+            <div className="pt-2 flex flex-wrap items-center gap-3">
               <button
                 id="about-learn-more-btn"
                 onClick={() => setShowStoryModal(true)}
@@ -102,6 +159,17 @@ export const AboutSection: React.FC = () => {
                 <span>Learn More</span>
                 <ArrowRight className="w-4 h-4 text-amber-300" />
               </button>
+
+              <a
+                href={BANAYA_MAPS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 bg-white hover:bg-emerald-50 text-[#064E3B] border border-emerald-200 font-semibold text-sm px-5 py-3 rounded-full shadow-xs transition-all duration-200"
+              >
+                <MapPin className="w-4 h-4 text-emerald-700" />
+                <span>View Location</span>
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+              </a>
             </div>
 
           </ScrollReveal>
@@ -154,8 +222,34 @@ export const AboutSection: React.FC = () => {
                 </ul>
               </div>
               <p>
-                Thank you for welcoming Banayana Enterprise into your kitchen, skincare altar, and family wellness journey.
+                Thank you for welcoming {BANAYA_STORE_NAME} into your kitchen, skincare altar, and family wellness journey.
               </p>
+              <div className="p-4 bg-emerald-50/70 rounded-2xl border border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>{BANAYA_STORE_NAME} · {BANAYA_COORDINATES_LABEL}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <Mail className="w-3.5 h-3.5 text-emerald-700" />
+                    <a
+                      href={`mailto:${BANAYA_CONTACT_EMAIL}`}
+                      className="font-medium text-emerald-800 hover:underline"
+                    >
+                      {BANAYA_CONTACT_EMAIL}
+                    </a>
+                  </div>
+                </div>
+                <a
+                  href={BANAYA_MAPS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-full text-xs font-semibold shrink-0 transition-colors"
+                >
+                  <span>Google Maps</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
             </div>
 
             <div className="mt-6 pt-4 border-t border-slate-200 flex justify-end">

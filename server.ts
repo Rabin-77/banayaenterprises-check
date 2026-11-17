@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import nodemailer from 'nodemailer';
 import { sortCatalogByCanonicalOrder } from './src/utils/catalogOrder';
 import { DEFAULT_MEDIA_FOLDERS } from './src/data/defaultMediaFolders';
 import type { MediaFolder, MediaFolderImage } from './src/types';
@@ -36,6 +37,7 @@ interface StoredProduct {
 
 interface StoredOrder {
   id: string;
+  receiptNumber?: string;
   date: string;
   items: Array<{
     product: StoredProduct;
@@ -59,11 +61,24 @@ interface StoredOrder {
   bankRef?: string;
 }
 
+interface ReceiptDispatchLog {
+  orderId: string;
+  receiptNumber: string;
+  eventType: 'order-receipt' | 'order-confirmed';
+  adminEmailTarget: string;
+  customerEmailTarget: string;
+  adminEmailSent: boolean;
+  customerEmailSent: boolean;
+  portalAlertRecorded: boolean;
+  dispatchedAt: string;
+}
+
 interface StoreState {
   products: StoredProduct[];
   orders: StoredOrder[];
   adminNotes: Record<string, string>;
   mediaFolders: MediaFolder[];
+  receiptLogs?: ReceiptDispatchLog[];
   updatedAt: number;
 }
 
@@ -86,6 +101,78 @@ const ROOT_DIR = process.cwd();
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DEFAULT_PRODUCTS_PATH = path.join(ROOT_DIR, 'src', 'data', 'products.json');
 const ADMIN_PASSKEY = process.env.ADMIN_PASSKEY || 'banayana00123';
+const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL || 'banayaenterprise100@gmail.com';
+
+function getSmtpTransporter() {
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+  if (!user || !pass) return null;
+
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const port = Number(process.env.SMTP_PORT) || 465;
+  return {
+    user,
+    transporter: nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass }
+    })
+  };
+}
+
+function escapeServerHtml(raw: string): string {
+  return String(raw || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildServerReceiptHtml(order: StoredOrder, isConfirmed: boolean): string {
+  const receiptNo = order.receiptNumber || `RCP-${order.id}`;
+  const txnRef = (order.transactionId || order.bankRef || '').trim() || 'Submitted';
+  const rows = (order.items || [])
+    .map((item, idx) => {
+      const unitPrice = Number(item.product?.price) || 0;
+      const qty = Number(item.quantity) || 1;
+      return `<tr>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${idx + 1}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;"><strong>${escapeServerHtml(item.product?.name || 'Product')}</strong> (${escapeServerHtml(item.selectedWeight)})</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;">${qty}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:right;">&#8377;${(unitPrice * qty).toLocaleString('en-IN')}</td>
+      </tr>`;
+    })
+    .join('');
+
+  return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+    <div style="background:#064E3B;color:#fff;padding:20px 24px;">
+      <h2 style="margin:0;font-size:20px;">Banaya Enterprises — Official Order Receipt</h2>
+      <p style="margin:6px 0 0;font-size:12px;color:#d1fae5;">Receipt: ${escapeServerHtml(receiptNo)} &middot; Order ID: ${escapeServerHtml(order.id)}</p>
+    </div>
+    <div style="padding:14px 24px;background:${isConfirmed ? '#ecfdf5' : '#fffbeb'};border-bottom:1px solid #e2e8f0;font-size:13px;font-weight:700;color:${isConfirmed ? '#065f46' : '#92400e'};">
+      ${isConfirmed ? `PAYMENT VERIFIED & ORDER CONFIRMED (${escapeServerHtml(order.status)})` : 'NEW ORDER & PAYMENT SUBMITTED — VERIFICATION PENDING'}
+    </div>
+    <div style="padding:20px 24px;font-size:13px;color:#1e293b;">
+      <p style="margin:0 0 8px;"><strong>Customer:</strong> ${escapeServerHtml(order.customerName)} (${escapeServerHtml(order.phone)})</p>
+      <p style="margin:0 0 8px;"><strong>Delivery Address:</strong> ${escapeServerHtml(order.shippingAddress)}, ${escapeServerHtml(order.city)} - ${escapeServerHtml(order.postalCode)}</p>
+      <p style="margin:0 0 8px;"><strong>Payment Method:</strong> ${escapeServerHtml(order.paymentMethod)} &middot; <strong>UTR / Txn Ref:</strong> ${escapeServerHtml(txnRef)}</p>
+      <p style="margin:0 0 16px;"><strong>Tracking No:</strong> ${escapeServerHtml(order.trackingNumber || 'Pending')}</p>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;font-size:12px;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">#</th>
+            <th style="padding:8px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">Item</th>
+            <th style="padding:8px 10px;text-align:center;border-bottom:1px solid #e2e8f0;">Qty</th>
+            <th style="padding:8px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p style="margin:16px 0 0;font-size:16px;font-weight:700;text-align:right;">Total Paid: &#8377;${Number(order.totalAmount || 0).toLocaleString('en-IN')}</p>
+    </div>
+  </div>`;
+}
 
 const isRunningTsx =
   process.execArgv.some((arg) => arg.includes('tsx')) ||
@@ -270,6 +357,7 @@ function loadInitialStore(): StoreState {
           mediaFolders: Array.isArray(parsed.mediaFolders)
             ? parsed.mediaFolders
             : JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
+          receiptLogs: Array.isArray(parsed.receiptLogs) ? parsed.receiptLogs : [],
           updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()
         }, defaultProducts);
       }
@@ -287,6 +375,7 @@ function loadInitialStore(): StoreState {
       'STM-85219': 'Joint pain soup ordered for elderly parents. Shipped priority.'
     },
     mediaFolders: JSON.parse(JSON.stringify(DEFAULT_MEDIA_FOLDERS)) as MediaFolder[],
+    receiptLogs: [],
     updatedAt: Date.now()
   }, defaultProducts);
 }
@@ -914,6 +1003,164 @@ async function startServer(): Promise<void> {
     } catch (err) {
       console.error('Admin note update error:', err);
       res.status(500).json({ error: 'Failed to save admin note' });
+    }
+  });
+
+  // Check notification / SMTP delivery capability
+  app.get('/api/notifications/status', (_req: Request, res: Response) => {
+    const smtp = getSmtpTransporter();
+    res.json({
+      smtpConfigured: Boolean(smtp),
+      adminAlertEmail: ADMIN_ALERT_EMAIL,
+      recentDispatches: (storeState.receiptLogs || []).slice(0, 20)
+    });
+  });
+
+  // Automatically record & dispatch receipt + admin alert on customer order payment
+  app.post('/api/notifications/order-receipt', async (req: Request, res: Response) => {
+    try {
+      const order = req.body as StoredOrder;
+      if (!order || !order.id) {
+        res.status(400).json({ error: 'Invalid order payload for receipt dispatch' });
+        return;
+      }
+
+      const receiptNumber = order.receiptNumber || `RCP-${order.id}`;
+      const normalizedOrder: StoredOrder = { ...order, receiptNumber };
+      storeState.orders = [normalizedOrder, ...storeState.orders.filter((o) => o.id !== order.id)];
+
+      let adminEmailSent = false;
+      let customerEmailSent = false;
+      const smtp = getSmtpTransporter();
+
+      if (smtp) {
+        const html = buildServerReceiptHtml(normalizedOrder, false);
+        try {
+          await smtp.transporter.sendMail({
+            from: `"Banaya Enterprises Orders" <${smtp.user}>`,
+            to: ADMIN_ALERT_EMAIL,
+            subject: `[Admin Alert] New Order & Payment Receipt ${receiptNumber} (₹${normalizedOrder.totalAmount})`,
+            html
+          });
+          adminEmailSent = true;
+        } catch (mailErr) {
+          console.warn('Admin receipt email dispatch failed:', mailErr);
+        }
+
+        if (normalizedOrder.email && normalizedOrder.email.includes('@')) {
+          try {
+            await smtp.transporter.sendMail({
+              from: `"Banaya Enterprises" <${smtp.user}>`,
+              to: normalizedOrder.email,
+              subject: `Order & Payment Receipt ${receiptNumber} — Banaya Enterprises`,
+              html
+            });
+            customerEmailSent = true;
+          } catch (mailErr) {
+            console.warn('Customer receipt email dispatch failed:', mailErr);
+          }
+        }
+      }
+
+      const logEntry: ReceiptDispatchLog = {
+        orderId: normalizedOrder.id,
+        receiptNumber,
+        eventType: 'order-receipt',
+        adminEmailTarget: ADMIN_ALERT_EMAIL,
+        customerEmailTarget: normalizedOrder.email || '',
+        adminEmailSent,
+        customerEmailSent,
+        portalAlertRecorded: true,
+        dispatchedAt: new Date().toISOString()
+      };
+
+      storeState.receiptLogs = [logEntry, ...(storeState.receiptLogs || [])].slice(0, 100);
+      persistStore(false);
+      broadcastStoreUpdate('order-receipt-dispatched');
+
+      res.status(201).json({
+        ok: true,
+        receiptNumber,
+        smtpConfigured: Boolean(smtp),
+        adminEmailSent,
+        customerEmailSent,
+        portalAlertRecorded: true
+      });
+    } catch (err) {
+      console.error('Order receipt notification error:', err);
+      res.status(500).json({ error: 'Failed to process order receipt alert' });
+    }
+  });
+
+  // Automatically dispatch verified order confirmation & receipt to customer (and admin copy)
+  app.post('/api/notifications/order-confirmed', async (req: Request, res: Response) => {
+    try {
+      const order = req.body as StoredOrder;
+      if (!order || !order.id) {
+        res.status(400).json({ error: 'Invalid order payload for confirmation dispatch' });
+        return;
+      }
+
+      const receiptNumber = order.receiptNumber || `RCP-${order.id}`;
+      const normalizedOrder: StoredOrder = { ...order, receiptNumber };
+      let adminEmailSent = false;
+      let customerEmailSent = false;
+      const smtp = getSmtpTransporter();
+
+      if (smtp) {
+        const html = buildServerReceiptHtml(normalizedOrder, true);
+        if (normalizedOrder.email && normalizedOrder.email.includes('@')) {
+          try {
+            await smtp.transporter.sendMail({
+              from: `"Banaya Enterprises" <${smtp.user}>`,
+              to: normalizedOrder.email,
+              subject: `Order Confirmed & Payment Verified (${normalizedOrder.id} / ${receiptNumber})`,
+              html
+            });
+            customerEmailSent = true;
+          } catch (mailErr) {
+            console.warn('Customer confirmation email failed:', mailErr);
+          }
+        }
+        try {
+          await smtp.transporter.sendMail({
+            from: `"Banaya Enterprises Orders" <${smtp.user}>`,
+            to: ADMIN_ALERT_EMAIL,
+            subject: `[Order Confirmed] ${normalizedOrder.id} (${receiptNumber}) — Status: ${normalizedOrder.status}`,
+            html
+          });
+          adminEmailSent = true;
+        } catch (mailErr) {
+          console.warn('Admin confirmation copy failed:', mailErr);
+        }
+      }
+
+      const logEntry: ReceiptDispatchLog = {
+        orderId: normalizedOrder.id,
+        receiptNumber,
+        eventType: 'order-confirmed',
+        adminEmailTarget: ADMIN_ALERT_EMAIL,
+        customerEmailTarget: normalizedOrder.email || '',
+        adminEmailSent,
+        customerEmailSent,
+        portalAlertRecorded: true,
+        dispatchedAt: new Date().toISOString()
+      };
+
+      storeState.receiptLogs = [logEntry, ...(storeState.receiptLogs || [])].slice(0, 100);
+      persistStore(false);
+      broadcastStoreUpdate('order-confirmed-dispatched');
+
+      res.json({
+        ok: true,
+        receiptNumber,
+        smtpConfigured: Boolean(smtp),
+        adminEmailSent,
+        customerEmailSent
+      });
+    } catch (err) {
+      console.error('Order confirmation notification error:', err);
+      res.status(500).json({ error: 'Failed to dispatch order confirmation' });
     }
   });
 

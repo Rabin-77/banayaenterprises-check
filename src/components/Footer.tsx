@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
 import { 
   Phone, Mail, MapPin, Instagram, Facebook, Youtube, 
-  MessageCircle, ChevronRight, X, KeyRound 
+  MessageCircle, ChevronRight, X, KeyRound, ExternalLink 
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { ScrollReveal } from './ScrollReveal';
+import {
+  BANAYA_CONTACT_EMAIL,
+  BANAYA_COORDINATES_LABEL,
+  BANAYA_MAPS_URL,
+  BANAYA_STORE_NAME,
+} from '../config/storeContact';
 
 export const Footer: React.FC = () => {
   const { setSelectedCategory, setActiveModal } = useShop();
@@ -21,7 +27,7 @@ export const Footer: React.FC = () => {
   const openSupportModal = (title: string, type: 'shipping' | 'returns' | 'privacy' | 'terms' | 'faq') => {
     const contents: Record<string, string> = {
       shipping: 'We provide express door-to-door delivery across all pin codes in India. Orders are dispatched within 24 hours from our sanitized regional facility. Free shipping applies automatically on all orders above ₹499. Standard delivery takes 2-4 business days for South India and 3-6 business days for the rest of India.',
-      returns: 'Given the food, ingestible and personal hygiene nature of our natural formulations, we accept returns or replacements within 7 days if the product arrived damaged, broken, or with seal tampering. Simply send photos to care@banayana.com or WhatsApp +91 883 859 8172 for instant doorstep resolution.',
+      returns: `Given the food, ingestible and personal hygiene nature of our natural formulations, we accept returns or replacements within 7 days if the product arrived damaged, broken, or with seal tampering. Simply send photos to ${BANAYA_CONTACT_EMAIL} or WhatsApp +91 883 859 8172 for instant doorstep resolution.`,
       privacy: 'Banayana Enterprise adheres strictly to digital privacy best practices. Your personal credentials, contact numbers, and delivery addresses are encrypted and never shared or sold to third-party marketing entities. We use enterprise-grade secure payment gateways.',
       terms: 'All items listed on Banayana Enterprise are prepared in small batches using traditional artisanal methods and wild-harvested natural botanicals. Color and texture may exhibit subtle seasonal variation, which is the authentic hallmark of pure natural ingredients without artificial stabilizers.',
       faq: 'Q: How is your honey raw?\nA: Our honey is unheated, unpasteurized, and never blended with synthetic corn or sugar syrups. It contains natural living enzymes.\n\nQ: What is A2 Bilona Ghee?\nA: It is churned from cultured curd of native Gir & Kangayam cows using wooden churners, slow-simmered over brass cauldrons.\n\nQ: What payment methods are supported?\nA: We accept 100% secure online payments via Net Banking (SBI, HDFC, ICICI, Axis, Kotak & all major Indian banks) as well as Google Pay, PhonePe, Paytm, and UPI ID.'
@@ -221,8 +227,8 @@ export const Footer: React.FC = () => {
             <div className="flex items-start gap-3 text-xs sm:text-sm text-slate-400">
               <Mail className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <div>
-                <a href="mailto:care@banayana.com" className="hover:text-white font-medium block">
-                  care@banayana.com
+                <a href={`mailto:${BANAYA_CONTACT_EMAIL}`} className="hover:text-white font-medium block break-all">
+                  {BANAYA_CONTACT_EMAIL}
                 </a>
                 <span className="text-[11px] text-slate-500">Direct Customer Care</span>
               </div>
@@ -230,9 +236,23 @@ export const Footer: React.FC = () => {
 
             <div className="flex items-start gap-3 text-xs sm:text-sm text-slate-400">
               <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <p className="text-xs leading-relaxed">
-                No. 18, Heritage Wellness Enclave, 2nd Avenue, Anna Nagar, Chennai, Tamil Nadu - 600040
-              </p>
+              <div className="space-y-1">
+                <p className="text-xs leading-relaxed text-slate-300 font-medium">
+                  {BANAYA_STORE_NAME}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  {BANAYA_COORDINATES_LABEL}
+                </p>
+                <a
+                  href={BANAYA_MAPS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+                >
+                  <span>Open in Google Maps</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
             </div>
           </div>
 

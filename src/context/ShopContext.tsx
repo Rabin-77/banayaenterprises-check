@@ -30,7 +30,7 @@ import {
   isAllowedAdminEmailString,
   isVerifiedAdminEmail
 } from '../firebase';
-import { Product, CartItem, Order, ActiveModal, MediaFolder, MediaFolderImage } from '../types';
+import { Product, CartItem, Order, ActiveModal, MediaFolder, MediaFolderImage, AdminAlertRecord } from '../types';
 import { PRODUCTS } from '../data/products';
 import { DEFAULT_MEDIA_FOLDERS } from '../data/defaultMediaFolders';
 import { getPriceForProductWeight } from '../utils/pricing';
@@ -38,6 +38,7 @@ import { clearAdminSession } from '../utils/adminAuth';
 import { healLegacyProductImages } from '../utils/imageFallback';
 import { sortCatalogByCanonicalOrder } from '../utils/catalogOrder';
 import { MAX_PRODUCT_GALLERY_BYTES, calculateGalleryByteSize, optimizeImageToDataUrl } from '../utils/imageUpload';
+import { formatReceiptNumber } from '../utils/receipt';
 
 const SYNC_CHANNEL_NAME = 'banaya_store_sync';
 const CATALOG_VERSION_KEY = 'banaya_catalog_version';
@@ -146,6 +147,11 @@ interface ShopContextType {
   deleteOrder: (orderId: string) => void;
   adminNotes?: Record<string, string>;
   setAdminNotesForOrder: (orderId: string, note: string) => void;
+  adminAlerts: AdminAlertRecord[];
+  unreadAlertsCount: number;
+  smtpEmailConfigured: boolean;
+  acknowledgeAdminAlert: (orderId: string) => void;
+  markCustomerNotified: (orderId: string) => void;
 
   // Financial Calculations
   getEffectivePrice: (item: CartItem) => number;
@@ -159,6 +165,30 @@ interface ShopContextType {
 }
 
 const ShopContext = createContext<ShopContextType | undefined>(undefined);
+
+function playAdminAlertChime(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const notes = [587.33, 880];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.14);
+      gain.gain.setValueAtTime(0.08, now + i * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.14 + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.14);
+      osc.stop(now + i * 0.14 + 0.36);
+    });
+  } catch {
+    // Browser autoplay guard or Web Audio unavailable
+  }
+}
 
 function sanitizeFirestoreId(raw: string, prefix = 'id'): string {
   const cleaned = (raw || '')
@@ -333,9 +363,13 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [emailPasswordProviderDisabled, setEmailPasswordProviderDisabled] = useState<boolean>(false);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [canAttemptFirstTimeSetup, setCanAttemptFirstTimeSetup] = useState<boolean>(false);
+  const [adminAlerts, setAdminAlerts] = useState<AdminAlertRecord[]>([]);
+  const [smtpEmailConfigured, setSmtpEmailConfigured] = useState<boolean>(false);
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const seededCollectionsRef = useRef<boolean>(false);
+  const alertsHydratedRef = useRef<boolean>(false);
+  const knownAlertIdsRef = useRef<Set<string>>(new Set());
 
   // Persistence for Cart
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -742,6 +776,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const mappedStatus = ord.status === 'Delivered' || ord.status === 'Shipped' ? 'Confirmed' : ord.status;
           orderBatch.set(doc(db, 'orders', cleanOrderId), {
             id: cleanOrderId,
+            receiptNumber: formatReceiptNumber(cleanOrderId),
             date: ord.date,
             items: ord.items.map((it) => ({
               quantity: it.quantity,
@@ -771,9 +806,26 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           orderBatch.set(doc(db, 'orderStatus', cleanOrderId), {
             orderId: cleanOrderId,
+            receiptNumber: formatReceiptNumber(cleanOrderId),
             status: mappedStatus,
             paymentVerified: mappedStatus !== 'Processing',
             trackingNumber: ord.trackingNumber || '',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          orderBatch.set(doc(db, 'adminAlerts', cleanOrderId), {
+            orderId: cleanOrderId,
+            receiptNumber: formatReceiptNumber(cleanOrderId),
+            customerName: ord.customerName,
+            phone: ord.phone,
+            email: ord.email || '',
+            totalAmount: ord.totalAmount,
+            paymentMethod: ord.paymentMethod,
+            transactionId: ord.transactionId || '',
+            itemsSummary: ord.items.map((it) => `${it.product.name} (${it.selectedWeight}) x${it.quantity}`).join(', ').slice(0, 600),
+            alertStatus: mappedStatus === 'Processing' ? 'unread' : 'verified',
+            customerNotified: mappedStatus !== 'Processing',
+            emailSent: false,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -944,14 +996,76 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
+    const unsubAlerts = onSnapshot(
+      collection(db, 'adminAlerts'),
+      (snap) => {
+        const parsedAlerts: AdminAlertRecord[] = snap.docs
+          .map((d) => {
+            const data = d.data() as Partial<AdminAlertRecord> & { createdAt?: { toMillis?: () => number } };
+            return {
+              orderId: data.orderId || d.id,
+              receiptNumber: data.receiptNumber || formatReceiptNumber(data.orderId || d.id),
+              customerName: data.customerName || 'Customer',
+              phone: data.phone || '',
+              email: data.email || '',
+              totalAmount: Number(data.totalAmount) || 0,
+              paymentMethod: data.paymentMethod || 'Online Payment',
+              transactionId: data.transactionId || '',
+              itemsSummary: data.itemsSummary || '',
+              alertStatus: (data.alertStatus as AdminAlertRecord['alertStatus']) || 'unread',
+              customerNotified: Boolean(data.customerNotified),
+              emailSent: Boolean(data.emailSent),
+              createdAtMs: typeof data.createdAt?.toMillis === 'function' ? data.createdAt.toMillis() : Date.now()
+            };
+          })
+          .sort((a, b) => b.createdAtMs - a.createdAtMs);
+
+        if (alertsHydratedRef.current) {
+          const brandNewUnread = parsedAlerts.filter(
+            (a) => a.alertStatus === 'unread' && !knownAlertIdsRef.current.has(a.orderId)
+          );
+          if (brandNewUnread.length > 0) {
+            playAdminAlertChime();
+            const latest = brandNewUnread[0];
+            showToast(
+              `New Order Receipt Alert (${latest.receiptNumber})`,
+              `${latest.customerName} paid ₹${latest.totalAmount.toLocaleString('en-IN')} via ${latest.paymentMethod}.`,
+              'success'
+            );
+          }
+        } else {
+          alertsHydratedRef.current = true;
+        }
+
+        knownAlertIdsRef.current = new Set(parsedAlerts.map((a) => a.orderId));
+        setAdminAlerts(parsedAlerts);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'adminAlerts');
+      }
+    );
+
+    void fetch('/api/notifications/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((info: { smtpConfigured?: boolean } | null) => {
+        if (info && typeof info.smtpConfigured === 'boolean') {
+          setSmtpEmailConfigured(info.smtpConfigured);
+        }
+      })
+      .catch(() => {
+        // ignore if server endpoint unavailable in static hosting
+      });
+
     return () => {
       unsubFolders();
       unsubOrders();
       unsubNotes();
+      unsubAlerts();
+      alertsHydratedRef.current = false;
       imageListeners.forEach((unsub) => unsub());
       imageListeners.clear();
     };
-  }, [authReady, isCloudAdmin]);
+  }, [authReady, isCloudAdmin, showToast]);
 
   // Local cache fallback (never throws if quota reached)
   useEffect(() => {
@@ -1186,9 +1300,15 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const submittedTxnId = clampString((details.transactionId || details.bankRef || '').trim(), 120);
     const submittedBankRef = clampString((details.bankRef || details.transactionId || '').trim(), 120);
     const cleanId = sanitizeFirestoreId(`BNY-${orderNumber}`, 'BNY');
+    const receiptNumber = formatReceiptNumber(cleanId);
+    const itemsSummary = clampString(
+      cart.map((it) => `${it.product.name} (${it.selectedWeight}) x${it.quantity}`).join(', '),
+      600
+    );
 
     const newOrder: Order = {
       id: cleanId,
+      receiptNumber,
       date: new Date().toISOString().split('T')[0],
       items: [...cart],
       subtotal: cartSubtotal,
@@ -1212,9 +1332,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     clearCart();
     setAppliedCoupon(null);
 
-    // Push order directly to Firestore as Processing (awaiting merchant verification)
+    // Push order, non-PII live tracker, and admin alert receipt atomically to Firestore
     const firestoreOrderPayload = {
       id: newOrder.id,
+      receiptNumber,
       date: newOrder.date,
       items: newOrder.items.slice(0, 30).map((it) => ({
         quantity: it.quantity,
@@ -1247,6 +1368,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const publicStatusPayload = {
       orderId: cleanId,
+      receiptNumber,
       status: 'Processing',
       paymentVerified: false,
       trackingNumber: newOrder.trackingNumber || '',
@@ -1254,11 +1376,39 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: serverTimestamp()
     };
 
-    void Promise.all([
-      setDoc(doc(db, 'orders', cleanId), firestoreOrderPayload),
-      setDoc(doc(db, 'orderStatus', cleanId), publicStatusPayload)
-    ]).catch((err) => {
-      console.warn('Firestore order sync note:', err);
+    const adminAlertPayload = {
+      orderId: cleanId,
+      receiptNumber,
+      customerName: newOrder.customerName,
+      phone: newOrder.phone,
+      email: newOrder.email || '',
+      totalAmount: Number(newOrder.totalAmount) || 0,
+      paymentMethod: newOrder.paymentMethod,
+      transactionId: newOrder.transactionId || '',
+      itemsSummary,
+      alertStatus: 'unread',
+      customerNotified: false,
+      emailSent: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'orders', cleanId), firestoreOrderPayload);
+    batch.set(doc(db, 'orderStatus', cleanId), publicStatusPayload);
+    batch.set(doc(db, 'adminAlerts', cleanId), adminAlertPayload);
+
+    void batch.commit().catch((err) => {
+      console.warn('Firestore order batch sync note:', err);
+    });
+
+    // Dispatch automatic backend receipt alert (records server receipt log + auto-emails if SMTP configured)
+    void fetch('/api/notifications/order-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newOrder)
+    }).catch(() => {
+      // Static deployments rely on Firestore real-time adminAlerts listener
     });
 
     return newOrder;
@@ -1693,6 +1843,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           return setDoc(statusRef, {
             orderId: cleanOrderId,
+            receiptNumber: formatReceiptNumber(cleanOrderId),
             status,
             paymentVerified,
             trackingNumber: resolvedTracking,
@@ -1703,20 +1854,92 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .catch((err) => {
           handleFirestoreError(err, OperationType.WRITE, `orderStatus/${cleanOrderId}`);
         });
+
+      const alertRef = doc(db, 'adminAlerts', cleanOrderId);
+      void getDoc(alertRef)
+        .then((snap) => {
+          if (snap.exists()) {
+            return updateDoc(alertRef, {
+              alertStatus: paymentVerified ? 'verified' : 'acknowledged',
+              customerNotified: paymentVerified,
+              updatedAt: serverTimestamp()
+            });
+          }
+          return null;
+        })
+        .catch(() => {
+          // ignore if alert doc not yet present
+        });
+
+      if (paymentVerified && existingOrder) {
+        const updatedOrderObj: Order = {
+          ...existingOrder,
+          receiptNumber: existingOrder.receiptNumber || formatReceiptNumber(cleanOrderId),
+          status,
+          trackingNumber: resolvedTracking
+        };
+        void fetch('/api/notifications/order-confirmed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedOrderObj)
+        }).catch(() => {
+          // Live /orderStatus snapshot still pushes confirmation straight to customer UI
+        });
+      }
     }
 
-    showToast('Order Updated', `Order ${orderId} updated to "${status}".`, 'success');
+    showToast(
+      status === 'Confirmed' ? 'Payment Verified & Customer Notified' : 'Order Updated',
+      status === 'Confirmed'
+        ? `Order ${orderId} confirmed. Customer live tracking & receipt updated.`
+        : `Order ${orderId} updated to "${status}".`,
+      'success'
+    );
+  };
+
+  const acknowledgeAdminAlert = (orderId: string) => {
+    const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
+    setAdminAlerts((prev) =>
+      prev.map((a) => (a.orderId === cleanOrderId && a.alertStatus === 'unread' ? { ...a, alertStatus: 'acknowledged' } : a))
+    );
+    if (isCloudAdmin) {
+      void updateDoc(doc(db, 'adminAlerts', cleanOrderId), {
+        alertStatus: 'acknowledged',
+        updatedAt: serverTimestamp()
+      }).catch(() => {
+        // ignore
+      });
+    }
+  };
+
+  const markCustomerNotified = (orderId: string) => {
+    const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
+    setAdminAlerts((prev) =>
+      prev.map((a) => (a.orderId === cleanOrderId ? { ...a, customerNotified: true } : a))
+    );
+    if (isCloudAdmin) {
+      void updateDoc(doc(db, 'adminAlerts', cleanOrderId), {
+        customerNotified: true,
+        updatedAt: serverTimestamp()
+      }).catch(() => {
+        // ignore
+      });
+    }
   };
 
   const deleteOrder = (orderId: string) => {
     const cleanOrderId = sanitizeFirestoreId(orderId, 'ord');
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
+    setAdminAlerts((prev) => prev.filter((a) => a.orderId !== cleanOrderId));
     if (isCloudAdmin) {
       void deleteDoc(doc(db, 'orders', cleanOrderId)).catch((err) => {
         handleFirestoreError(err, OperationType.DELETE, `orders/${cleanOrderId}`);
       });
       void deleteDoc(doc(db, 'orderStatus', cleanOrderId)).catch(() => {
         // ignore if status doc absent
+      });
+      void deleteDoc(doc(db, 'adminAlerts', cleanOrderId)).catch(() => {
+        // ignore if alert doc absent
       });
     }
     showToast('Order Removed', `Order ${orderId} deleted from records.`, 'info');
@@ -1745,6 +1968,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     }
   };
+
+  const unreadAlertsCount = useMemo(
+    () => adminAlerts.filter((a) => a.alertStatus === 'unread').length,
+    [adminAlerts]
+  );
 
   return (
     <ShopContext.Provider
@@ -1813,6 +2041,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteOrder,
         adminNotes,
         setAdminNotesForOrder,
+        adminAlerts,
+        unreadAlertsCount,
+        smtpEmailConfigured,
+        acknowledgeAdminAlert,
+        markCustomerNotified,
         getEffectivePrice,
         cartCount,
         cartSubtotal,

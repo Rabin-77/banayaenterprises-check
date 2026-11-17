@@ -24,12 +24,25 @@ import {
   Eye,
   EyeOff,
   Mail,
-  Lock
+  Lock,
+  BellRing,
+  FileText,
+  Download,
+  Printer,
+  CheckCircle2
 } from 'lucide-react';
 import { useShop } from '../context/ShopContext';
 import { Product, Order } from '../types';
 import { CATEGORIES } from '../data/categories';
 import { ADMIN_EMAIL, ADMIN_EMAILS, FIREBASE_PROJECT_ID } from '../firebase';
+import { BANAYA_CONTACT_EMAIL } from '../config/storeContact';
+import { getPriceForProductWeight } from '../utils/pricing';
+import {
+  downloadOrderReceipt,
+  formatReceiptNumber,
+  buildAdminReceiptMailtoUrl,
+  buildCustomerConfirmationMailtoUrl
+} from '../utils/receipt';
 import {
   uploadProductImage,
   calculateGalleryByteSize,
@@ -86,6 +99,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
     deleteImageFromFolder,
     updateOrderStatus,
     deleteOrder,
+    adminAlerts,
+    unreadAlertsCount,
+    smtpEmailConfigured,
+    acknowledgeAdminAlert,
+    markCustomerNotified,
     showToast
   } = useShop();
 
@@ -133,6 +151,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
   const [orderDraftTracking, setOrderDraftTracking] = useState('');
   const [orderDraftNote, setOrderDraftNote] = useState('');
   const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
 
   // Customers Tab State
   const [customerSearch, setCustomerSearch] = useState('');
@@ -880,11 +899,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
   }
 
   // ==================== MAIN ADMIN WORKSPACE ====================
-  const navItems: Array<{ id: AdminTab; label: string; icon: React.ReactNode; count?: number }> = [
+  const navItems: Array<{
+    id: AdminTab;
+    label: string;
+    icon: React.ReactNode;
+    count?: number;
+    badge?: number;
+  }> = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'products', label: 'Products & Photos', icon: <Package className="w-4 h-4" />, count: products.length },
     { id: 'folders', label: 'Image Folders', icon: <FolderOpen className="w-4 h-4" />, count: mediaFolders.length },
-    { id: 'orders', label: 'Orders', icon: <ShoppingBag className="w-4 h-4" />, count: orders.length },
+    {
+      id: 'orders',
+      label: 'Orders',
+      icon: <ShoppingBag className="w-4 h-4" />,
+      count: orders.length,
+      badge: unreadAlertsCount
+    },
     { id: 'customers', label: 'Customers', icon: <Users className="w-4 h-4" />, count: customers.length }
   ];
 
@@ -935,15 +966,22 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                     {item.icon}
                     <span>{item.label}</span>
                   </span>
-                  {item.count !== undefined && (
-                    <span
-                      className={`text-xs font-mono tabular-nums ${
-                        isActive ? 'text-emerald-200' : 'text-slate-400'
-                      }`}
-                    >
-                      {item.count}
-                    </span>
-                  )}
+                  <span className="flex items-center gap-1.5">
+                    {item.badge !== undefined && item.badge > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-bold tabular-nums">
+                        {item.badge} new
+                      </span>
+                    )}
+                    {item.count !== undefined && (
+                      <span
+                        className={`text-xs font-mono tabular-nums ${
+                          isActive ? 'text-emerald-200' : 'text-slate-400'
+                        }`}
+                      >
+                        {item.count}
+                      </span>
+                    )}
+                  </span>
                 </button>
               );
             })}
@@ -1097,6 +1135,109 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                   </div>
                 </div>
 
+                {/* Live Order & Payment Receipt Alerts Feed */}
+                <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <BellRing className={`w-4 h-4 ${unreadAlertsCount > 0 ? 'text-amber-600' : 'text-emerald-700'}`} />
+                      <h2 className="text-sm font-semibold text-slate-900">
+                        Live Order &amp; Payment Receipt Alerts
+                      </h2>
+                      {unreadAlertsCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold tabular-nums">
+                          {unreadAlertsCount} unread
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      {smtpEmailConfigured
+                        ? `Auto-SMTP Email Active (${BANAYA_CONTACT_EMAIL})`
+                        : `Portal Real-Time Alerts Active · Target: ${BANAYA_CONTACT_EMAIL}`}
+                    </span>
+                  </div>
+
+                  {adminAlerts.length > 0 ? (
+                    <div className="divide-y divide-slate-200">
+                      {adminAlerts.slice(0, 5).map((alert) => {
+                        const matchedOrder = orders.find((o) => o.id === alert.orderId);
+                        return (
+                          <div
+                            key={alert.orderId}
+                            className={`p-4 flex flex-wrap items-center justify-between gap-3 ${
+                              alert.alertStatus === 'unread' ? 'bg-amber-50/40' : 'bg-white'
+                            }`}
+                          >
+                            <div className="space-y-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="font-mono font-semibold text-slate-900">
+                                  {alert.receiptNumber}
+                                </span>
+                                <span className="text-slate-400">&middot;</span>
+                                <span className="font-medium text-slate-800">
+                                  {alert.customerName}
+                                </span>
+                                <span className="font-semibold text-[#1B3624] tabular-nums">
+                                  &#8377;{alert.totalAmount.toLocaleString('en-IN')}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                                    alert.alertStatus === 'verified'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : alert.alertStatus === 'acknowledged'
+                                        ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  }`}
+                                >
+                                  {alert.alertStatus === 'verified'
+                                    ? 'Verified & Customer Notified'
+                                    : alert.alertStatus === 'acknowledged'
+                                      ? 'Alert Read'
+                                      : 'New Payment Alert'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 truncate max-w-2xl">
+                                {alert.itemsSummary} · UTR:{' '}
+                                <span className="font-mono text-slate-700">{alert.transactionId || 'Submitted'}</span>
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {matchedOrder && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    acknowledgeAdminAlert(alert.orderId);
+                                    setReceiptOrder(matchedOrder);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span>Receipt</span>
+                                </button>
+                              )}
+                              {alert.alertStatus !== 'verified' && matchedOrder && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateOrderStatus(matchedOrder.id, 'Confirmed', matchedOrder.trackingNumber)
+                                  }
+                                  className="px-2.5 py-1.5 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
+                                >
+                                  Verify &amp; Notify Customer
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-6 text-center text-xs text-slate-500">
+                      New customer order receipts and payment alerts appear here automatically in real time.
+                    </div>
+                  )}
+                </div>
+
                 <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-slate-900">Recent Orders</h2>
@@ -1136,11 +1277,18 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                             <td className="py-3 px-4 text-xs font-medium text-slate-700">
                               {ord.status}
                             </td>
-                            <td className="py-3 px-4 text-right">
+                            <td className="py-3 px-4 text-right space-x-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setReceiptOrder(ord)}
+                                className="px-2.5 py-1 rounded border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+                              >
+                                Receipt
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => openOrderEditor(ord)}
-                                className="px-2.5 py-1 rounded border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                                className="px-2.5 py-1 rounded border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
                               >
                                 Manage
                               </button>
@@ -1675,6 +1823,28 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
             {/* 4. ORDERS TAB */}
             {activeTab === 'orders' && (
               <div className="space-y-4">
+                {/* Admin Receipt Dispatch & Unread Alerts Summary */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <BellRing className={`w-4 h-4 shrink-0 ${unreadAlertsCount > 0 ? 'text-amber-600' : 'text-emerald-700'}`} />
+                    <div>
+                      <strong className="text-slate-900 block">
+                        Automatic Admin &amp; Customer Receipt Desk ({BANAYA_CONTACT_EMAIL})
+                      </strong>
+                      <span className="text-slate-600">
+                        {smtpEmailConfigured
+                          ? 'Auto-SMTP email dispatch is active for both admin alerts and verified customer receipts.'
+                          : 'Real-time Admin Portal alerts & customer tracking sync are active. Configure SMTP_USER/SMTP_PASS env secrets to also push automated Gmail emails, or use 1-click Receipt Email below.'}
+                      </span>
+                    </div>
+                  </div>
+                  {unreadAlertsCount > 0 && (
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-amber-900 font-semibold tabular-nums">
+                      {unreadAlertsCount} New Payment Alert{unreadAlertsCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+
                 <div className="flex flex-col sm:flex-row gap-2.5">
                   <div className="relative flex-1 max-w-sm">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1705,7 +1875,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                     <table className="w-full text-left border-collapse text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500">
-                          <th className="py-3 px-4">Order ID</th>
+                          <th className="py-3 px-4">Order &amp; Receipt</th>
                           <th className="py-3 px-4">Date</th>
                           <th className="py-3 px-4">Customer</th>
                           <th className="py-3 px-4">Payment / UTR</th>
@@ -1718,11 +1888,23 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                         {filteredOrders.map((ord) => {
                           const txnRef = ord.transactionId || ord.bankRef || '';
                           const isPendingVerification = ord.status === 'Processing';
+                          const receiptNo = ord.receiptNumber || formatReceiptNumber(ord.id);
+                          const alertRecord = adminAlerts.find((a) => a.orderId === ord.id);
                           return (
-                            <tr key={ord.id} className="hover:bg-slate-50/70">
+                            <tr
+                              key={ord.id}
+                              className={
+                                alertRecord?.alertStatus === 'unread'
+                                  ? 'bg-amber-50/35 hover:bg-amber-50/60'
+                                  : 'hover:bg-slate-50/70'
+                              }
+                            >
                               <td className="py-3 px-4">
                                 <div className="font-mono text-xs font-medium text-slate-900">
                                   {ord.id}
+                                </div>
+                                <div className="font-mono text-[11px] text-emerald-700">
+                                  {receiptNo}
                                 </div>
                                 <div className="font-mono text-[11px] text-slate-400">
                                   {ord.trackingNumber || '—'}
@@ -1734,6 +1916,9 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                               <td className="py-3 px-4">
                                 <p className="text-slate-900 font-medium">{ord.customerName}</p>
                                 <p className="text-xs text-slate-500">{ord.phone}</p>
+                                {ord.email && (
+                                  <p className="text-[11px] text-slate-400 truncate max-w-[180px]">{ord.email}</p>
+                                )}
                               </td>
                               <td className="py-3 px-4">
                                 <p className="text-xs text-slate-700 truncate max-w-[180px]" title={ord.paymentMethod}>
@@ -1758,19 +1943,33 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
                                 )}
                               </td>
                               <td className="py-3 px-4 text-right whitespace-nowrap">
-                                <div className="inline-flex items-center gap-2">
+                                <div className="inline-flex items-center gap-1.5">
                                   {isPendingVerification && (
                                     <button
                                       type="button"
                                       onClick={() => updateOrderStatus(ord.id, 'Confirmed', ord.trackingNumber)}
                                       className="px-2.5 py-1.5 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
                                     >
-                                      Verify &amp; Confirm
+                                      Verify &amp; Notify Customer
                                     </button>
                                   )}
                                   <button
                                     type="button"
-                                    onClick={() => openOrderEditor(ord)}
+                                    onClick={() => {
+                                      acknowledgeAdminAlert(ord.id);
+                                      setReceiptOrder(ord);
+                                    }}
+                                    className="px-2.5 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>Receipt</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      acknowledgeAdminAlert(ord.id);
+                                      openOrderEditor(ord);
+                                    }}
                                     className="px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-medium text-slate-800 cursor-pointer"
                                   >
                                     Update
@@ -2669,6 +2868,197 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({ isOpen
               </div>
             </div>
           </form>
+        </div>
+      )}
+      {/* ==================== OFFICIAL RECEIPT PREVIEW MODAL ==================== */}
+      {receiptOrder && (
+        <div
+          onClick={() => setReceiptOrder(null)}
+          className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden my-auto"
+          >
+            {/* Header */}
+            <div className="px-5 py-4 bg-[#064E3B] text-white flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-amber-300 font-semibold">
+                  Official Order &amp; Payment Receipt
+                </p>
+                <h3 className="text-base font-bold font-mono">
+                  {receiptOrder.receiptNumber || formatReceiptNumber(receiptOrder.id)} &middot; {receiptOrder.id}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptOrder(null)}
+                className="p-1.5 rounded-lg text-emerald-100 hover:bg-emerald-800 cursor-pointer"
+                aria-label="Close receipt preview"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 text-xs sm:text-sm max-h-[75vh] overflow-y-auto">
+              <div
+                className={`p-3 rounded-lg border flex flex-wrap items-center justify-between gap-2 ${
+                  receiptOrder.status === 'Processing'
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-semibold text-xs">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>
+                    {receiptOrder.status === 'Processing'
+                      ? 'Payment Submitted — Awaiting Admin Verification'
+                      : `Payment Verified & Order ${receiptOrder.status}`}
+                  </span>
+                </div>
+                {receiptOrder.status === 'Processing' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateOrderStatus(receiptOrder.id, 'Confirmed', receiptOrder.trackingNumber);
+                      setReceiptOrder({ ...receiptOrder, status: 'Confirmed' });
+                    }}
+                    className="px-3 py-1.5 rounded-md bg-[#1B3624] hover:bg-[#14291b] text-white text-xs font-medium cursor-pointer"
+                  >
+                    Verify Payment &amp; Notify Customer
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs bg-slate-50 p-4 rounded-lg border border-slate-200">
+                <div className="space-y-1">
+                  <span className="text-[11px] font-semibold uppercase text-slate-500">Customer Details</span>
+                  <p className="font-semibold text-slate-900 text-sm">{receiptOrder.customerName}</p>
+                  <p className="text-slate-600">{receiptOrder.phone}</p>
+                  {receiptOrder.email && <p className="text-slate-600">{receiptOrder.email}</p>}
+                  <p className="text-slate-600">
+                    {receiptOrder.shippingAddress}, {receiptOrder.city} - {receiptOrder.postalCode}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] font-semibold uppercase text-slate-500">Payment Reference</span>
+                  <p className="text-slate-700">
+                    <strong>Method:</strong> {receiptOrder.paymentMethod}
+                  </p>
+                  <p className="text-slate-700">
+                    <strong>UTR / Txn ID:</strong>{' '}
+                    <span className="font-mono font-semibold text-slate-900">
+                      {receiptOrder.transactionId || receiptOrder.bankRef || 'Submitted'}
+                    </span>
+                  </p>
+                  <p className="text-slate-700">
+                    <strong>Tracking No:</strong>{' '}
+                    <span className="font-mono">{receiptOrder.trackingNumber}</span>
+                  </p>
+                  <p className="text-slate-700">
+                    <strong>Date:</strong> {receiptOrder.date}
+                  </p>
+                </div>
+              </div>
+
+              {/* Items Table */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold">
+                      <th className="py-2.5 px-3">Item</th>
+                      <th className="py-2.5 px-3 text-center">Qty</th>
+                      <th className="py-2.5 px-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {receiptOrder.items.map((item, idx) => {
+                      const unitPrice = getPriceForProductWeight(item.product, item.selectedWeight).price;
+                      return (
+                        <tr key={idx}>
+                          <td className="py-2.5 px-3 text-slate-900 font-medium">
+                            {item.product.name}{' '}
+                            <span className="text-slate-500 font-normal">({item.selectedWeight})</span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center text-slate-700 tabular-nums">
+                            {item.quantity}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-semibold text-slate-900 tabular-nums">
+                            &#8377;{(unitPrice * item.quantity).toLocaleString('en-IN')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between font-bold text-slate-950 text-sm">
+                  <span>Total Amount</span>
+                  <span className="tabular-nums">&#8377;{receiptOrder.totalAmount.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadOrderReceipt(receiptOrder)}
+                  className="h-9 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Receipt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="h-9 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-medium inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print</span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={buildAdminReceiptMailtoUrl(receiptOrder)}
+                  className="h-9 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-medium inline-flex items-center gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Admin Copy ({BANAYA_CONTACT_EMAIL})</span>
+                </a>
+                {receiptOrder.email && (
+                  <a
+                    href={buildCustomerConfirmationMailtoUrl(receiptOrder)}
+                    onClick={() => markCustomerNotified(receiptOrder.id)}
+                    className="h-9 px-3 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white font-medium inline-flex items-center gap-1.5"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Email Customer Receipt</span>
+                  </a>
+                )}
+                {receiptOrder.phone && (
+                  <a
+                    href={`https://wa.me/${receiptOrder.phone.replace(/[^\d]/g, '')}?text=${encodeURIComponent(
+                      `Hello ${receiptOrder.customerName}, your Banaya Enterprises order ${receiptOrder.id} (Receipt: ${
+                        receiptOrder.receiptNumber || formatReceiptNumber(receiptOrder.id)
+                      }) is ${receiptOrder.status === 'Processing' ? 'recorded & awaiting verification' : `${receiptOrder.status} (Payment Verified)`}. Tracking: ${
+                        receiptOrder.trackingNumber
+                      }. Total: Rs.${receiptOrder.totalAmount}.`
+                    )}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => markCustomerNotified(receiptOrder.id)}
+                    className="h-9 px-3 rounded-lg bg-[#25D366] hover:bg-[#20bd5a] text-white font-medium inline-flex items-center gap-1.5"
+                  >
+                    <span>WhatsApp Customer</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -66,6 +66,7 @@ export interface Ingredient {
 
 export interface Order {
   id: string;
+  receiptNumber?: string;
   date: string;
   items: CartItem[];
   subtotal: number;
@@ -83,6 +84,22 @@ export interface Order {
   trackingNumber: string;
   transactionId?: string;
   bankRef?: string;
+}
+
+export interface AdminAlertRecord {
+  orderId: string;
+  receiptNumber: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  totalAmount: number;
+  paymentMethod: string;
+  transactionId: string;
+  itemsSummary: string;
+  alertStatus: 'unread' | 'acknowledged' | 'verified';
+  customerNotified: boolean;
+  emailSent: boolean;
+  createdAtMs: number;
 }
 
 export type ActiveModal = 

@@ -3,7 +3,7 @@ import { Search, ShoppingBag, Heart, User, Menu, X, Sparkles, Phone, ChevronRigh
 import { useShop } from '../context/ShopContext';
 
 export const Header: React.FC = () => {
-  const { cartCount, wishlist, setActiveModal, setSelectedCategory } = useShop();
+  const { cartCount, wishlist, setActiveModal, setSelectedCategory, isCloudAdmin, unreadAlertsCount } = useShop();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -59,7 +59,13 @@ export const Header: React.FC = () => {
               className="hover:text-amber-300 transition-colors cursor-pointer flex items-center gap-1.5 font-bold bg-emerald-900/50 px-2.5 py-0.5 rounded-full border border-emerald-700/60"
               title="Restricted Staff & Admin Management Portal"
             >
-              <KeyRound className="w-3 h-3 text-amber-300" /> Admin Portal
+              <KeyRound className="w-3 h-3 text-amber-300" />
+              <span>Admin Portal</span>
+              {isCloudAdmin && unreadAlertsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold tabular-nums">
+                  {unreadAlertsCount}
+                </span>
+              )}
             </button>
             <span className="text-emerald-700">|</span>
             <button 
@@ -340,7 +346,12 @@ export const Header: React.FC = () => {
                 className="w-full py-2.5 px-3 bg-slate-900 text-amber-300 text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-xs"
               >
                 <KeyRound className="w-4 h-4 text-amber-300" />
-                Admin Management Portal
+                <span>Admin Management Portal</span>
+                {isCloudAdmin && unreadAlertsCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold tabular-nums">
+                    {unreadAlertsCount}
+                  </span>
+                )}
               </button>
             </div>
           </div>

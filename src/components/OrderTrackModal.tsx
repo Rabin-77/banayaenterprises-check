@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, CheckCircle2, Truck, MapPin, MessageCircle, AlertCircle, Clock } from 'lucide-react';
+import { X, Search, CheckCircle2, Truck, MapPin, MessageCircle, AlertCircle, Clock, Download } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useShop } from '../context/ShopContext';
 import { Order } from '../types';
 import { DISPLAY_PHONE_NUMBER, openWhatsAppUrl } from '../utils/whatsapp';
+import { downloadOrderReceipt, formatReceiptNumber } from '../utils/receipt';
 
 const STATUS_STAGE_INDEX: Record<Order['status'], number> = {
   Processing: 0,
@@ -217,6 +218,11 @@ export const OrderTrackModal: React.FC = () => {
                   <strong className="text-sm font-mono text-slate-950">
                     {displayOrderId} &middot; {effectiveTrackingNumber}
                   </strong>
+                  {localMatchedOrder && (
+                    <span className="text-[11px] font-mono text-slate-500 block">
+                      Receipt: {localMatchedOrder.receiptNumber || formatReceiptNumber(localMatchedOrder.id)}
+                    </span>
+                  )}
                 </div>
                 {localMatchedOrder?.transactionId && (
                   <div>
@@ -317,16 +323,27 @@ export const OrderTrackModal: React.FC = () => {
                     <span className="text-slate-500 text-[11px]">Chat with our desk on WhatsApp ({DISPLAY_PHONE_NUMBER})</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const text = `Hello Banaya Enterprise, please give me a status update for my Order ID ${displayOrderId} (Tracking: ${effectiveTrackingNumber}).`;
-                    openWhatsAppUrl(`https://wa.me/918838598172?text=${encodeURIComponent(text)}`);
-                  }}
-                  className="w-full sm:w-auto px-4 py-2 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-                >
-                  <MessageCircle className="w-3.5 h-3.5 fill-current" /> WhatsApp Updates
-                </button>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  {localMatchedOrder && (
+                    <button
+                      type="button"
+                      onClick={() => downloadOrderReceipt(localMatchedOrder, effectivePaymentVerified)}
+                      className="flex-1 sm:flex-initial px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Official Receipt
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = `Hello Banaya Enterprise, please give me a status update for my Order ID ${displayOrderId} (Tracking: ${effectiveTrackingNumber}).`;
+                      openWhatsAppUrl(`https://wa.me/918838598172?text=${encodeURIComponent(text)}`);
+                    }}
+                    className="flex-1 sm:flex-initial px-4 py-2 bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 fill-current" /> WhatsApp Updates
+                  </button>
+                </div>
               </div>
             </div>
           ) : (

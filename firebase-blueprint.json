@@ -267,6 +267,11 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt reference (e.g. RCP-BNY-12345)",
+          "maxLength": 128
+        },
         "date": {
           "type": "string",
           "description": "ISO order date",
@@ -473,6 +478,11 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt reference (e.g. RCP-BNY-12345)",
+          "maxLength": 128
+        },
         "status": {
           "type": "string",
           "description": "Order fulfillment status",
@@ -508,6 +518,103 @@
         "orderId",
         "status",
         "paymentVerified",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminAlert": {
+      "title": "AdminAlert",
+      "description": "Automatic store admin payment receipt alert generated upon customer checkout.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "Associated Order ID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "receiptNumber": {
+          "type": "string",
+          "description": "Official receipt identifier",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer full name",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "description": "Customer phone number",
+          "minLength": 6,
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer email address",
+          "maxLength": 160
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Order total paid in INR"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Selected payment method",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Submitted UPI or Bank UTR reference",
+          "maxLength": 120
+        },
+        "itemsSummary": {
+          "type": "string",
+          "description": "Short ordered items summary",
+          "maxLength": 600
+        },
+        "alertStatus": {
+          "type": "string",
+          "description": "Admin alert review state",
+          "enum": [
+            "unread",
+            "acknowledged",
+            "verified"
+          ]
+        },
+        "customerNotified": {
+          "type": "boolean",
+          "description": "Whether confirmed order notification was dispatched to customer"
+        },
+        "emailSent": {
+          "type": "boolean",
+          "description": "Whether automated SMTP email receipt was sent"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "orderId",
+        "receiptNumber",
+        "customerName",
+        "phone",
+        "totalAmount",
+        "paymentMethod",
+        "alertStatus",
+        "customerNotified",
+        "emailSent",
         "createdAt",
         "updatedAt"
       ]
@@ -555,6 +662,12 @@
         "$ref": "#/entities/OrderStatusPublic"
       },
       "description": "Non-PII live payment verification and tracking status readable by exact Order ID."
+    },
+    "/adminAlerts/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/AdminAlert"
+      },
+      "description": "Admin-only real-time receipt alerts created atomically alongside checkout orders."
     }
   }
 }
