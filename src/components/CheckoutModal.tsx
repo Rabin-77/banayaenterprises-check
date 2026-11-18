@@ -71,23 +71,23 @@ const PAYMENT_OPTIONS: PaymentOptionConfig[] = [
   {
     id: 'gpay',
     label: 'Google Pay',
-    subtitle: 'Pay securely using Google Pay',
-    tag: 'Recommended'
+    subtitle: 'Pay using Google Pay'
   },
   {
     id: 'phonepe',
     label: 'PhonePe',
-    subtitle: 'Pay securely using PhonePe'
+    subtitle: 'Pay using PhonePe'
   },
   {
     id: 'paytm',
     label: 'Paytm',
-    subtitle: 'Pay securely using Paytm'
+    subtitle: 'Pay using Paytm'
   },
   {
     id: 'upi',
     label: 'UPI Payment',
-    subtitle: 'Pay using your UPI ID or any UPI app'
+    subtitle: 'Instant pay via WhatsApp Pay or any UPI app',
+    tag: 'Recommended'
   },
   {
     id: 'netbanking',
@@ -306,7 +306,7 @@ export const CheckoutModal: React.FC = () => {
   const [gatewaySessionId, setGatewaySessionId] = useState<string>('');
   const [gatewaySecondsLeft, setGatewaySecondsLeft] = useState<number>(600);
 
-  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('gpay');
+  const [selectedPayment, setSelectedPayment] = useState<PaymentOptionId>('upi');
   const [selectedBankId, setSelectedBankId] = useState<string>('sbi');
   const [customerUpiId, setCustomerUpiId] = useState<string>('');
 
@@ -536,7 +536,7 @@ export const CheckoutModal: React.FC = () => {
     setStep('details');
     setGatewayPhase('connecting');
     setGatewaySessionId('');
-    setSelectedPayment('gpay');
+    setSelectedPayment('upi');
     setSelectedBankId('sbi');
     setCustomerUpiId('');
     setTransactionIdInput('');
@@ -1568,39 +1568,17 @@ export const CheckoutModal: React.FC = () => {
                                 /* CLEAN FLIPKART / AMAZON STYLE GOOGLE PAY / PHONEPE / PAYTM DIRECT PAY (ZERO QR CODE) */
                                 <div className="space-y-3">
                                   <p className="text-xs text-slate-600">
-                                    {option.id === 'gpay' || option.id === 'phonepe' ? (
-                                      <>
-                                        Clicking Pay opens <strong>{option.label}</strong> directly to{' '}
-                                        <strong>Banaya Enterprise</strong> (amount{' '}
-                                        <strong className="text-slate-900 tabular-nums">
-                                          ₹{cartTotal.toLocaleString('en-IN')}
-                                        </strong>{' '}
-                                        copied/ready without bank-limit blocks). After paying, return here to enter your UTR ID.
-                                      </>
-                                    ) : (
-                                      <>
-                                        Clicking Pay opens <strong>{option.label}</strong> directly with{' '}
-                                        <strong className="text-slate-900 tabular-nums">
-                                          ₹{cartTotal.toLocaleString('en-IN')}
-                                        </strong>{' '}
-                                        pre-filled to <strong>Banaya Enterprise</strong>. After paying, you return to the order confirmation screen.
-                                      </>
-                                    )}
+                                    Clicking Pay opens <strong>{option.label}</strong> directly with{' '}
+                                    <strong className="text-slate-900 tabular-nums">
+                                      ₹{cartTotal.toLocaleString('en-IN')}
+                                    </strong>{' '}
+                                    pre-filled to <strong>Banaya Enterprise</strong>. After paying, you return to the order confirmation screen.
                                   </p>
                                   {!gatewayConfig.razorpayEnabled ? (
                                     <a
                                       id={`pay-${option.id}-btn`}
-                                      href={
-                                        option.id === 'gpay' || option.id === 'phonepe'
-                                          ? appDirectOpenMap[option.id]
-                                          : upiIntentMap[option.id]
-                                      }
-                                      onClick={(e) => {
-                                        if (option.id === 'gpay' || option.id === 'phonepe') {
-                                          void copyTextSafely(String(cartTotal));
-                                        }
-                                        handleDirectAnchorStepTransition(e, option.label);
-                                      }}
+                                      href={upiIntentMap[option.id]}
+                                      onClick={(e) => handleDirectAnchorStepTransition(e, option.label)}
                                       className="w-full sm:w-auto sm:inline-flex min-w-[240px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
                                     >
                                       <span>Pay ₹{cartTotal.toLocaleString('en-IN')} with {option.label}</span>
@@ -1630,6 +1608,27 @@ export const CheckoutModal: React.FC = () => {
                                       We never ask for your UPI PIN here. {option.label} shows an NPCI safety reminder (&ldquo;Never enter your UPI PIN to receive money&rdquo;) because PIN is only for <strong>paying</strong> your order amount to <strong>Banaya Enterprise</strong>.
                                     </span>
                                   </p>
+                                  {(option.id === 'gpay' || option.id === 'phonepe') && !gatewayConfig.razorpayEnabled && (
+                                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 leading-relaxed">
+                                      If {option.label} shows &ldquo;exceeded bank limit&rdquo;, your money is <strong>not debited</strong> &mdash; tap{' '}
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedPayment('upi')}
+                                        className="font-semibold underline text-[#064E3B] cursor-pointer"
+                                      >
+                                        UPI Payment (WhatsApp Pay)
+                                      </button>{' '}
+                                      or{' '}
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedPayment('netbanking')}
+                                        className="font-semibold underline text-[#064E3B] cursor-pointer"
+                                      >
+                                        Net Banking
+                                      </button>{' '}
+                                      to complete ₹{cartTotal.toLocaleString('en-IN')} instantly.
+                                    </p>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1957,32 +1956,20 @@ export const CheckoutModal: React.FC = () => {
 
                               <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
                                 <a
-                                  href={
-                                    selectedPayment === 'gpay' || selectedPayment === 'phonepe'
-                                      ? appDirectOpenMap[selectedPayment]
-                                      : upiIntentMap[selectedPayment]
-                                  }
+                                  href={upiIntentMap[selectedPayment]}
                                   onClick={(e) => handleLaunchPaymentApp(e, selectedOption.label)}
                                   className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
                                 >
                                   <Smartphone className="w-4 h-4" />
-                                  <span>
-                                    Open {selectedOption.label} (
-                                    {selectedPayment === 'gpay' || selectedPayment === 'phonepe'
-                                      ? `Enter ₹${cartTotal.toLocaleString('en-IN')}`
-                                      : `₹${cartTotal.toLocaleString('en-IN')}`}
-                                    )
-                                  </span>
+                                  <span>Open {selectedOption.label} (₹{cartTotal.toLocaleString('en-IN')})</span>
                                 </a>
-                                {(selectedPayment === 'gpay' || selectedPayment === 'phonepe') && (
-                                  <a
-                                    href={upiIntentMap[selectedPayment]}
-                                    onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} (Auto ₹${cartTotal})`)}
-                                    className="h-9 px-3 rounded-lg border border-[#064E3B]/30 bg-white hover:bg-emerald-50 text-[#064E3B] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
-                                  >
-                                    <span>Try Auto-Fill ₹{cartTotal.toLocaleString('en-IN')} in {selectedOption.label}</span>
-                                  </a>
-                                )}
+                                <a
+                                  href={appDirectOpenMap[selectedPayment]}
+                                  onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} (Manual Amount)`)}
+                                  className="h-9 px-3 rounded-lg border border-[#064E3B]/30 bg-white hover:bg-emerald-50 text-[#064E3B] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                                >
+                                  <span>Open {selectedOption.label} (Manual ₹{cartTotal.toLocaleString('en-IN')})</span>
+                                </a>
                                 {selectedPayment !== 'upi' && (
                                   <a
                                     href={buildNativeUpiUrl(cartTotal)}
