@@ -27,7 +27,8 @@ import {
   ChevronDown,
   ChevronUp,
   Split,
-  Info
+  Info,
+  QrCode
 } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -49,6 +50,8 @@ import {
 import { handleProductImageError, handleProductImageLoad } from '../utils/imageFallback';
 
 type PaymentOptionId = 'netbanking' | 'gpay' | 'phonepe' | 'paytm' | 'upi';
+
+const BANAYA_UPI_QR_IMAGE = '/assets/aistudio/image_07be354a.png';
 
 interface PaymentOptionConfig {
   id: PaymentOptionId;
@@ -439,10 +442,15 @@ export const CheckoutModal: React.FC = () => {
     typeof navigator !== 'undefined' &&
     (/Android/i.test(navigator.userAgent) ||
       (/Linux/i.test(navigator.platform || '') && navigator.maxTouchPoints > 1));
+  const isIosTouchDevice =
+    typeof navigator !== 'undefined' &&
+    (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
   const isMobileDevice =
     typeof navigator !== 'undefined' &&
-    (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (navigator.maxTouchPoints > 1 && typeof window !== 'undefined' && window.innerWidth < 1024));
+    (isAndroidDevice ||
+      isIosTouchDevice ||
+      (/Mobile/i.test(navigator.userAgent) && !/Windows|Mac OS X/i.test(navigator.userAgent)));
 
   const formatUpiAmount = (amountInr: number): string => {
     const clean = Math.max(1, Number(amountInr) || 1);
@@ -738,6 +746,17 @@ export const CheckoutModal: React.FC = () => {
       }
     }
 
+    const sessionId = `GW-${Date.now().toString().slice(-8)}`;
+    setGatewaySessionId(sessionId);
+    setTransactionIdInput('');
+    setSplitSecondTxnId('');
+    setSplitMode(false);
+    setSplitFirstAmount(cartTotal >= 20 ? Math.ceil(cartTotal / 2) : cartTotal);
+    setPaymentConfirmedCheck(false);
+    setStep('gateway');
+  };
+
+  const handleOpenGatewayForDesktopQr = () => {
     const sessionId = `GW-${Date.now().toString().slice(-8)}`;
     setGatewaySessionId(sessionId);
     setTransactionIdInput('');
@@ -1506,8 +1525,93 @@ export const CheckoutModal: React.FC = () => {
                                     </span>
                                   </div>
                                 </div>
+                              ) : !gatewayConfig.razorpayEnabled && !isMobileDevice ? (
+                                /* FLIPKART DESKTOP UPI SCAN & PAY QR CODE CARD (ONLY SHOWN ON DESKTOP; MOBILE LAUNCHES DIRECT APP) */
+                                <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+                                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                                    <div className="shrink-0 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-col items-center gap-2">
+                                      <img
+                                        src={BANAYA_UPI_QR_IMAGE}
+                                        alt="Banaya Enterprise UPI QR Code"
+                                        className="w-44 h-auto rounded-lg object-contain bg-white border border-slate-200"
+                                      />
+                                      <span className="text-[11px] font-medium text-slate-600 flex items-center gap-1">
+                                        <QrCode className="w-3.5 h-3.5 text-[#064E3B]" />
+                                        Scan with {option.id === 'upi' ? 'any UPI App' : option.label}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex-1 space-y-3 text-xs w-full">
+                                      <div>
+                                        <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                                          Scan &amp; Pay on Desktop ({option.label})
+                                        </div>
+                                        <h4 className="text-sm sm:text-base font-bold text-slate-900 mt-0.5">
+                                          Pay{' '}
+                                          <span className="tabular-nums text-[#064E3B]">
+                                            ₹{cartTotal.toLocaleString('en-IN')}
+                                          </span>{' '}
+                                          to Banaya Enterprise
+                                        </h4>
+                                      </div>
+
+                                      <ol className="space-y-1.5 text-slate-600 list-decimal list-inside">
+                                        <li>
+                                          Open <strong>{option.id === 'upi' ? 'Google Pay, PhonePe, Paytm or WhatsApp Pay' : option.label}</strong> on your mobile phone and tap <strong>Scan any QR</strong>.
+                                        </li>
+                                        <li>
+                                          Enter exact amount{' '}
+                                          <strong className="text-slate-900 tabular-nums">
+                                            ₹{cartTotal.toLocaleString('en-IN')}
+                                          </strong>{' '}
+                                          and complete payment with your UPI PIN.
+                                        </li>
+                                        <li>
+                                          Click below to enter your 12-digit UTR / Transaction ID for instant order verification.
+                                        </li>
+                                      </ol>
+
+                                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
+                                          className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <span>{BANAYA_UPI_ID}</span>
+                                          {copiedVpa ? (
+                                            <Check className="w-3 h-3 text-emerald-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3 text-slate-500" />
+                                          )}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
+                                          className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <span>Amount: ₹{cartTotal.toLocaleString('en-IN')}</span>
+                                          {copiedAmount ? (
+                                            <Check className="w-3 h-3 text-emerald-600" />
+                                          ) : (
+                                            <Copy className="w-3 h-3 text-slate-500" />
+                                          )}
+                                        </button>
+                                      </div>
+
+                                      <button
+                                        id={`pay-${option.id}-btn`}
+                                        type="button"
+                                        onClick={handleOpenGatewayForDesktopQr}
+                                        className="w-full sm:w-auto min-w-[250px] h-11 px-6 rounded-lg bg-[#FB641B] hover:bg-[#ea580c] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer tabular-nums"
+                                      >
+                                        <span>I Paid ₹{cartTotal.toLocaleString('en-IN')} — Submit UTR ID</span>
+                                        <ArrowRight className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
                               ) : option.id === 'upi' ? (
-                                /* CLEAN FLIPKART / AMAZON STYLE UPI ID ENTRY (ZERO QR CODE) */
+                                /* MOBILE DIRECT UPI PAY (NO QR CODE ON MOBILE) */
                                 <div className="space-y-3 max-w-md">
                                   <div>
                                     <label
@@ -1565,7 +1669,7 @@ export const CheckoutModal: React.FC = () => {
                                   </p>
                                 </div>
                               ) : (
-                                /* CLEAN FLIPKART / AMAZON STYLE GOOGLE PAY / PHONEPE / PAYTM DIRECT PAY (ZERO QR CODE) */
+                                /* MOBILE DIRECT GOOGLE PAY / PHONEPE / PAYTM PAY (NO QR CODE ON MOBILE) */
                                 <div className="space-y-3">
                                   <p className="text-xs text-slate-600">
                                     Clicking Pay opens <strong>{option.label}</strong> directly with{' '}
@@ -1940,7 +2044,47 @@ export const CheckoutModal: React.FC = () => {
                     ) : (
                       <div className="space-y-4">
                         {/* Primary Single or Split Payment Launcher */}
-                        {!splitMode ? (
+                        {!isMobileDevice && !splitMode && (
+                          <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row items-center gap-4">
+                            <img
+                              src={BANAYA_UPI_QR_IMAGE}
+                              alt="Banaya Enterprise UPI QR Code"
+                              className="w-36 h-auto rounded-lg object-contain bg-white border border-slate-200 shrink-0"
+                            />
+                            <div className="space-y-2 text-xs">
+                              <div className="font-semibold text-slate-900 text-sm">
+                                Step 1: Scan &amp; Pay ₹{cartTotal.toLocaleString('en-IN')} via {selectedOption.label}
+                              </div>
+                              <p className="text-slate-600 leading-relaxed">
+                                Scan this QR code from your mobile phone ({selectedOption.label} / any UPI app), pay{' '}
+                                <strong className="text-slate-900 tabular-nums">
+                                  ₹{cartTotal.toLocaleString('en-IN')}
+                                </strong>
+                                , and enter your 12-digit UTR / Transaction ID below.
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCopyValue(BANAYA_UPI_ID, setCopiedVpa, 'UPI ID')}
+                                  className="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>{BANAYA_UPI_ID}</span>
+                                  {copiedVpa ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCopyValue(String(cartTotal), setCopiedAmount, 'Amount')}
+                                  className="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 font-mono text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>₹{cartTotal.toLocaleString('en-IN')}</span>
+                                  {copiedAmount ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-500" />}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {isMobileDevice && !splitMode ? (
                           <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
                             <div className="flex items-start justify-between gap-3 flex-wrap">
                               <div className="space-y-1">
@@ -1982,7 +2126,7 @@ export const CheckoutModal: React.FC = () => {
                               </div>
                             </div>
                           </div>
-                        ) : (
+                        ) : splitMode ? (
                           /* 2-Part Split Payment Launcher for Bank Per-Txn Limits */
                           <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-3.5">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -2041,7 +2185,7 @@ export const CheckoutModal: React.FC = () => {
                               </a>
                             </div>
                           </div>
-                        )}
+                        ) : null}
 
                         {/* Bank Limit Exceeded / UPI App Security Warning Recovery Box */}
                         <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3 text-xs">
@@ -2049,20 +2193,24 @@ export const CheckoutModal: React.FC = () => {
                             <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                             <div className="space-y-1">
                               <h5 className="font-semibold text-amber-950">
-                                Why Google Pay / PhonePe Fail While WhatsApp Pay Works (and How to Pay Instantly)
+                                {isMobileDevice
+                                  ? 'Having Trouble with Google Pay / PhonePe? Pay via UPI ID or Net Banking'
+                                  : 'Need an Alternative to QR Scan? Pay via UPI ID or IOB Bank Transfer'}
                               </h5>
                               <p className="text-amber-900 leading-relaxed">
-                                Google Pay and PhonePe block browser links that pre-fill an amount to a personal UPI ID (showing &ldquo;exceeded bank limit&rdquo; or declining), whereas <strong>WhatsApp Pay</strong> and manual in-app transfers allow them. Your account was <strong>not debited</strong>. Use any working option below:
+                                {isMobileDevice
+                                  ? 'Some banks or UPI apps block direct pre-filled browser links (showing "exceeded bank limit"), whereas WhatsApp Pay and manual in-app transfers work smoothly. Your account was not debited.'
+                                  : 'If QR scanning shows a bank limit warning on your phone, you can transfer manually using our UPI ID or Indian Overseas Bank account below, or switch to Net Banking.'}
                               </p>
                             </div>
                           </div>
 
                           <div className="bg-white rounded-lg border border-amber-200/80 p-3 space-y-2.5">
                             <div className="font-semibold text-slate-900">
-                              Option 1 (Fastest Fix): Pay Directly inside {selectedOption.label} via UPI ID or Bank Transfer
+                              Option 1: Pay Directly inside {selectedOption.label} via UPI ID or Bank Transfer
                             </div>
                             <p className="text-[11px] text-slate-600">
-                              Open {selectedOption.label} manually &rarr; choose <strong>Pay UPI ID</strong> or <strong>Bank Transfer</strong> &rarr; paste details below:
+                              Open {selectedOption.label} on your phone &rarr; choose <strong>Pay UPI ID</strong> or <strong>Bank Transfer</strong> &rarr; paste details below:
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
                               <button
