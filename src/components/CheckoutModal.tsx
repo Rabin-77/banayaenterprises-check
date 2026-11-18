@@ -435,6 +435,7 @@ export const CheckoutModal: React.FC = () => {
   const selectedOption = PAYMENT_OPTIONS.find((o) => o.id === selectedPayment) || PAYMENT_OPTIONS[0];
   const itemCount = cart.reduce((sum, it) => sum + it.quantity, 0);
 
+  const isAndroidDevice = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
   const isMobileDevice =
     typeof navigator !== 'undefined' &&
     (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
@@ -454,20 +455,33 @@ export const CheckoutModal: React.FC = () => {
   const buildUpiIntentMap = (
     amountInr: number
   ): Record<Exclude<PaymentOptionId, 'netbanking'>, string> => {
-    const nativeDeepLink = buildNativeUpiUrl(amountInr);
+    const params = `pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&am=${formatUpiAmount(amountInr)}&cu=INR`;
     return {
-      gpay: nativeDeepLink,
-      phonepe: nativeDeepLink,
-      paytm: nativeDeepLink,
-      upi: nativeDeepLink
+      gpay: isAndroidDevice
+        ? `intent://upi/pay?${params}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
+        : `tez://upi/pay?${params}`,
+      phonepe: isAndroidDevice
+        ? `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end;`
+        : `phonepe://pay?${params}`,
+      paytm: isAndroidDevice
+        ? `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end;`
+        : `paytmmp://pay?${params}`,
+      upi: `upi://pay?${params}`
     };
   };
 
-  // Manual-amount native UPI deep link without pre-locked amount
+  // Manual-amount deep links without pre-locked amount (avoids browser am= limit blocks inside GPay & PhonePe)
+  const safeBaseParams = `pa=${BANAYA_UPI_ID}&pn=BanayaEnterprise&cu=INR`;
   const appDirectOpenMap: Record<Exclude<PaymentOptionId, 'netbanking'>, string> = {
-    gpay: buildNativeUpiUrl(),
-    phonepe: buildNativeUpiUrl(),
-    paytm: buildNativeUpiUrl(),
+    gpay: isAndroidDevice
+      ? `intent://upi/pay?${safeBaseParams}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end;`
+      : `tez://upi/pay?${safeBaseParams}`,
+    phonepe: isAndroidDevice
+      ? `intent://pay?${safeBaseParams}#Intent;scheme=upi;package=com.phonepe.app;end;`
+      : `phonepe://pay?${safeBaseParams}`,
+    paytm: isAndroidDevice
+      ? `intent://pay?${safeBaseParams}#Intent;scheme=upi;package=net.one97.paytm;end;`
+      : `paytmmp://pay?${safeBaseParams}`,
     upi: buildNativeUpiUrl()
   };
 
@@ -1919,7 +1933,6 @@ export const CheckoutModal: React.FC = () => {
                               <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
                                 <a
                                   href={upiIntentMap[selectedPayment]}
-                                  rel="noopener noreferrer"
                                   onClick={(e) => handleLaunchPaymentApp(e, selectedOption.label)}
                                   className="h-10 px-4 rounded-lg bg-[#064E3B] hover:bg-[#047857] text-white text-xs sm:text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors shrink-0"
                                 >
@@ -1928,12 +1941,20 @@ export const CheckoutModal: React.FC = () => {
                                 </a>
                                 <a
                                   href={appDirectOpenMap[selectedPayment]}
-                                  rel="noopener noreferrer"
                                   onClick={(e) => handleLaunchPaymentApp(e, `${selectedOption.label} (Manual Amount)`)}
                                   className="h-9 px-3 rounded-lg border border-[#064E3B]/30 bg-white hover:bg-emerald-50 text-[#064E3B] text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
                                 >
                                   <span>Open {selectedOption.label} (Manual ₹{cartTotal.toLocaleString('en-IN')})</span>
                                 </a>
+                                {selectedPayment !== 'upi' && (
+                                  <a
+                                    href={buildNativeUpiUrl(cartTotal)}
+                                    onClick={(e) => handleLaunchPaymentApp(e, 'UPI App / WhatsApp Pay')}
+                                    className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                                  >
+                                    <span>Pay via WhatsApp Pay / Any UPI App</span>
+                                  </a>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2004,10 +2025,10 @@ export const CheckoutModal: React.FC = () => {
                             <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                             <div className="space-y-1">
                               <h5 className="font-semibold text-amber-950">
-                                Saw &ldquo;Exceeded bank limit&rdquo; or &ldquo;Never enter your UPI PIN to receive money&rdquo;?
+                                Why Google Pay / PhonePe Fail While WhatsApp Pay Works (and How to Pay Instantly)
                               </h5>
                               <p className="text-amber-900 leading-relaxed">
-                                <strong>Why this happens:</strong> UPI apps always show the NPCI safety notice (&ldquo;Never enter your UPI PIN to receive money&rdquo;) on PIN screens — you are <strong>sending payment</strong> for your order, never receiving money. Also, Indian banks block browser UPI links carrying an amount unless routed via a signed merchant gateway, and your account was <strong>not debited</strong>. Use any instant option below:
+                                Google Pay and PhonePe block browser links that pre-fill an amount to a personal UPI ID (showing &ldquo;exceeded bank limit&rdquo; or declining), whereas <strong>WhatsApp Pay</strong> and manual in-app transfers allow them. Your account was <strong>not debited</strong>. Use any working option below:
                               </p>
                             </div>
                           </div>
